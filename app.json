@@ -39,6 +39,12 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow ARISE to access your camera to scan room placards." // to give the app permission to use the camera; Android will display to the user in a popup when they open the scanner for the first time
+        }
       ]
     ],
     "experiments": {
