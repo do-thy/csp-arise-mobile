@@ -4,7 +4,9 @@ import { Button, StyleSheet, Text, View } from "react-native";
 export default function HomeScreen() {
   return (
     <View style={styles.container}>
-      <Text>Mock Home Screen</Text>
+      <Text>
+        Mock Home Screen
+      </Text>
 
       <Button
         title="Placard Scanner"
