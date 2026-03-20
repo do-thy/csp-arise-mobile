@@ -9,7 +9,9 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
+  Modal,
+  Image
 } from "react-native"; // modal and image for debugging only
 
 export default function RoomScanner() {
@@ -17,7 +19,7 @@ export default function RoomScanner() {
   const cameraRef = useRef<any>(null);
   const [isScanning, setIsScanning] = useState(false);
   // for debugging only
-  // const [debugImage, setDebugImage] = useState<string | null>(null);
+  const [debugImage, setDebugImage] = useState<string | null>(null);
 
   if (!permission) {
     return <View style={styles.container} />;
@@ -36,7 +38,7 @@ export default function RoomScanner() {
     );
   }
 
-  // triggers when the user taps the scan button
+// triggers when the user taps the scan button
   const handleScan = async () => {
     if (!cameraRef.current || isScanning) return;
 
@@ -46,16 +48,43 @@ export default function RoomScanner() {
       // 1. take photo
       const photo = await cameraRef.current.takePictureAsync({
         quality: 0.5,
-        skipProcessing: true,
       });
 
-      // 2. calculate the bounding box size
-      const cropSize = photo.width * 0.7;
-      const originX = (photo.width - cropSize) / 2;
-      const originY = photo.height * 0.2;
+      let actualWidth = photo.width;
+      let actualHeight = photo.height;
+      let manipulator = ImageManipulator.manipulate(photo.uri);
 
-      // 3. cut the image (Using the NEW Expo 51+ Syntax)
-      const imageRef = await ImageManipulator.manipulate(photo.uri)
+      // 2. fix the android "ghost rotation" bug
+      // if the photo is landscape but the phone is portrait, physically rotate it upright first
+      if (actualWidth > actualHeight) {
+        manipulator = manipulator.rotate(90);
+        actualWidth = photo.height;
+        actualHeight = photo.width;
+      }
+
+      // 3. calculate the bounding box size (using foolproof reverse-scaling)
+      const { width: screenW, height: screenH } = Dimensions.get("window");
+      
+      // find exactly how the camera feed is scaled to cover the screen
+      const scale = Math.max(screenW / actualWidth, screenH / actualHeight);
+      
+      // calculate how many pixels of the photo are hidden off-screen
+      const displayedW = actualWidth * scale;
+      const displayedH = actualHeight * scale;
+      const bleedX = (displayedW - screenW) / 2;
+      const bleedY = (displayedH - screenH) / 2;
+      
+      // find where the green box is on the screen
+      const uiBoxX = (screenW - SCANNER_SIZE) / 2;
+      const uiBoxY = (screenH - SCANNER_SIZE) / 3;
+      
+      // map the green box location perfectly back onto the raw photo
+      const originX = (uiBoxX + bleedX) / scale;
+      const originY = (uiBoxY + bleedY) / scale;
+      const cropSize = SCANNER_SIZE / scale;
+
+      // 4. cut the image
+      const imageRef = await manipulator
         .crop({ originX, originY, width: cropSize, height: cropSize })
         .renderAsync();
 
@@ -63,18 +92,20 @@ export default function RoomScanner() {
         compress: 1,
         format: SaveFormat.JPEG,
       });
+      // NOTE: the cropped image is ever so slightly smaller than the bounding box (may be due to the way the scaling and cropping math works out), therefore, to compensate, users are instructed to fit the placard fully within the bounding box and not let it touch the edges, this way the placards' paddings will compensate for this minor discrepancy and ensure all the placard text is captured in the cropped photo
 
-      // DEBUGGING ONLY: shows the cropped image in a modal
-      // setDebugImage(finalCroppedPhoto.uri);
+      // [START] DEBUGGING ONLY (showing the modal)
+      setDebugImage(finalCroppedPhoto.uri);
+      // [END] DEBUGGING ONLY
 
-      // 4. pass the cropped photo's local URI directly to ML Kit
+      // 5. pass the cropped photo's local URI directly to ML Kit
       const result = await TextRecognition.recognize(finalCroppedPhoto.uri);
 
-      // 5. data processing goes here later
+      // 6. data processing goes here later
 
-      // 6. extract the text and show the dialog box (temporary, replace with AR box later)
+      // 7. extract the text and show the dialog box (temporary, replace with AR box later)
       if (result.text && result.text.trim().length > 0) {
-        Alert.alert("", result.text); // for some reason, removing the empty string breaks the alert
+        Alert.alert("", result.text); 
       } else {
         Alert.alert("No Text Found");
       }
@@ -107,9 +138,11 @@ export default function RoomScanner() {
         </View>
         <View style={styles.unfocusedBottom}></View>
       </View>
-
       {/* scan button */}
       <View style={styles.controlsContainer}>
+        <Text style={styles.instructionText}>
+          Ensure the entire placard is seen in the bounding box.
+        </Text>
         <TouchableOpacity
           style={[styles.scanButton, isScanning && styles.scanButtonDisabled]}
           onPress={handleScan}
@@ -123,7 +156,7 @@ export default function RoomScanner() {
         </TouchableOpacity>
       </View>
       {/* [START] DEBUGGING ONLY (showing the modal) */}
-      {/* <Modal visible={!!debugImage} transparent={true} animationType="fade">
+      <Modal visible={!!debugImage} transparent={true} animationType="fade">
         <View style={styles.debugModalContainer}>
           <Text>Cropped Image:</Text>
           
@@ -136,7 +169,7 @@ export default function RoomScanner() {
             <Text style={styles.buttonText}>Close Preview</Text>
           </TouchableOpacity>
         </View>
-      </Modal> */}
+      </Modal>
       {/* [END] DEBUGGING ONLY */}
     </View>
   );
@@ -207,7 +240,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     right: 0,
     width: 50,
-    height: 50,
+    height: 250,
     borderColor: "#ff0000",
     borderBottomWidth: 4,
     borderRightWidth: 4,
@@ -219,6 +252,17 @@ const styles = StyleSheet.create({
     width: "100%",
     alignItems: "center",
   },
+  instructionText: {
+    color: "white",
+    fontSize: 14,
+    fontWeight: "600",
+    marginBottom: 15,
+    backgroundColor: "rgba(0, 0, 0, 0.5)", // dark background so it is readable over the camera feed
+    paddingVertical: 5,
+    paddingHorizontal: 15,
+    borderRadius: 20,
+    overflow: "hidden",
+  },
   scanButton: {
     backgroundColor: "#D53E0F",
     paddingVertical: 15,
@@ -228,12 +272,12 @@ const styles = StyleSheet.create({
     borderColor: "white",
   },
   scanButtonDisabled: { backgroundColor: "gray" },
-  scanButtonText: { color: "white", fontSize: 18, fontWeight: "bold" },
+  scanButtonText: { color: "white", fontSize: 18, fontWeight: "bold" }
 
   // [START] DEBUGGING ONLY (modal styles)
-  /* , debugModalContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  , debugModalContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center', padding: 20 },
   debugImage: { width: SCANNER_SIZE, height: SCANNER_SIZE, resizeMode: 'contain', borderWidth: 2, borderColor: '#00FF00', marginVertical: 20 },
   debugText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
-  debugButton: { backgroundColor: '#FF3B30', padding: 15, borderRadius: 8, marginTop: 10 } */
+  debugButton: { backgroundColor: '#FF3B30', padding: 15, borderRadius: 8, marginTop: 10 }
   // [END] DEBUGGING ONLY
 });
