@@ -205,15 +205,16 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
 
-  cornerTopLeft: {
+cornerTopLeft: {
     position: "absolute",
     top: 0,
     left: 0,
     width: 50,
     height: 50,
     borderColor: "#ff0000",
-    borderTopWidth: 4,
-    borderLeftWidth: 4,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
+    borderTopLeftRadius: 25,
   },
   cornerTopRight: {
     position: "absolute",
@@ -222,8 +223,9 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderColor: "#ff0000",
-    borderTopWidth: 4,
-    borderRightWidth: 4,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+    borderTopRightRadius: 25,
   },
   cornerBottomLeft: {
     position: "absolute",
@@ -232,18 +234,20 @@ const styles = StyleSheet.create({
     width: 50,
     height: 50,
     borderColor: "#ff0000",
-    borderBottomWidth: 4,
-    borderLeftWidth: 4,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+    borderBottomLeftRadius: 25,
   },
   cornerBottomRight: {
     position: "absolute",
     bottom: 0,
     right: 0,
     width: 50,
-    height: 250,
+    height: 50,
     borderColor: "#ff0000",
-    borderBottomWidth: 4,
-    borderRightWidth: 4,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+    borderBottomRightRadius: 25,
   },
 
   controlsContainer: {

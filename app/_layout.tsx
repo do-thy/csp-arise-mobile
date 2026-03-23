@@ -1,10 +1,15 @@
 import { Stack } from 'expo-router';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 export default function RootLayout() {
   return (
-    <Stack>
-      {/* looks for index.tsx file and hides the top header bar */}
-      <Stack.Screen name="index" options={{ headerShown: false }} />
-    </Stack>
+    <SafeAreaProvider>
+      <Stack
+        screenOptions={{
+          // hide the header for every screen
+          headerShown: false,
+        }}
+      />
+    </SafeAreaProvider>
   );
 }
