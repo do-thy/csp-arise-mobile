@@ -6,12 +6,12 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  Image,
+  Modal,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
-  Modal,
-  Image
 } from "react-native"; // modal and image for debugging only
 
 export default function RoomScanner() {
@@ -38,7 +38,7 @@ export default function RoomScanner() {
     );
   }
 
-// triggers when the user taps the scan button
+  // triggers when the user taps the scan button
   const handleScan = async () => {
     if (!cameraRef.current || isScanning) return;
 
@@ -64,20 +64,20 @@ export default function RoomScanner() {
 
       // 3. calculate the bounding box size (using foolproof reverse-scaling)
       const { width: screenW, height: screenH } = Dimensions.get("window");
-      
+
       // find exactly how the camera feed is scaled to cover the screen
       const scale = Math.max(screenW / actualWidth, screenH / actualHeight);
-      
+
       // calculate how many pixels of the photo are hidden off-screen
       const displayedW = actualWidth * scale;
       const displayedH = actualHeight * scale;
       const bleedX = (displayedW - screenW) / 2;
       const bleedY = (displayedH - screenH) / 2;
-      
+
       // find where the green box is on the screen
       const uiBoxX = (screenW - SCANNER_SIZE) / 2;
       const uiBoxY = (screenH - SCANNER_SIZE) / 3;
-      
+
       // map the green box location perfectly back onto the raw photo
       const originX = (uiBoxX + bleedX) / scale;
       const originY = (uiBoxY + bleedY) / scale;
@@ -105,7 +105,7 @@ export default function RoomScanner() {
 
       // 7. extract the text and show the dialog box (temporary, replace with AR box later)
       if (result.text && result.text.trim().length > 0) {
-        Alert.alert("", result.text); 
+        Alert.alert("", result.text);
       } else {
         Alert.alert("No Text Found");
       }
@@ -159,11 +159,13 @@ export default function RoomScanner() {
       <Modal visible={!!debugImage} transparent={true} animationType="fade">
         <View style={styles.debugModalContainer}>
           <Text>Cropped Image:</Text>
-          
-          {debugImage && <Image source={{ uri: debugImage }} style={styles.debugImage} />}
-          
-          <TouchableOpacity 
-            style={styles.debugButton} 
+
+          {debugImage && (
+            <Image source={{ uri: debugImage }} style={styles.debugImage} />
+          )}
+
+          <TouchableOpacity
+            style={styles.debugButton}
             onPress={() => setDebugImage(null)}
           >
             <Text style={styles.buttonText}>Close Preview</Text>
@@ -205,7 +207,7 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
 
-cornerTopLeft: {
+  cornerTopLeft: {
     position: "absolute",
     top: 0,
     left: 0,
@@ -276,12 +278,30 @@ cornerTopLeft: {
     borderColor: "white",
   },
   scanButtonDisabled: { backgroundColor: "gray" },
-  scanButtonText: { color: "white", fontSize: 18, fontWeight: "bold" }
+  scanButtonText: { color: "white", fontSize: 18, fontWeight: "bold" },
 
   // [START] DEBUGGING ONLY (modal styles)
-  , debugModalContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center', padding: 20 },
-  debugImage: { width: SCANNER_SIZE, height: SCANNER_SIZE, resizeMode: 'contain', borderWidth: 2, borderColor: '#00FF00', marginVertical: 20 },
-  debugText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
-  debugButton: { backgroundColor: '#FF3B30', padding: 15, borderRadius: 8, marginTop: 10 }
+  debugModalContainer: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.9)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  debugImage: {
+    width: SCANNER_SIZE,
+    height: SCANNER_SIZE,
+    resizeMode: "contain",
+    borderWidth: 2,
+    borderColor: "#00FF00",
+    marginVertical: 20,
+  },
+  debugText: { color: "white", fontSize: 18, fontWeight: "bold" },
+  debugButton: {
+    backgroundColor: "#FF3B30",
+    padding: 15,
+    borderRadius: 8,
+    marginTop: 10,
+  },
   // [END] DEBUGGING ONLY
 });

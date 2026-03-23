@@ -1,14 +1,13 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { Button, StyleSheet, Text, View, TouchableOpacity } from "react-native";
-import { SafeAreaView } from 'react-native-safe-area-context';
-import React from 'react';
-import { Ionicons } from '@expo/vector-icons';
+import React from "react";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        
         {/* header */}
         <View style={styles.header}>
           {/* left side of the header */}
@@ -31,13 +30,13 @@ export default function HomeScreen() {
 
         {/* button grid */}
         <View style={styles.gridContainer}>
-          
           {/* row 1 */}
           <View style={styles.gridRow}>
             {/* placard scanner card */}
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.card}
-              onPress={() => router.push('/placard-scanner')}>
+              onPress={() => router.push("/placard-scanner")}
+            >
               <View style={styles.cardIconCircle}>
                 <Ionicons name="qr-code-outline" size={24} color="#1C1917" />
               </View>
@@ -71,7 +70,6 @@ export default function HomeScreen() {
               <Text style={styles.cardText}>ROOM SEARCH</Text>
             </TouchableOpacity>
           </View>
-
         </View>
       </View>
     </SafeAreaView>
@@ -81,7 +79,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#FAF9F6', // main background
+    backgroundColor: "#FAF9F6", // main background
   },
   container: {
     flex: 1,
@@ -90,15 +88,15 @@ const styles = StyleSheet.create({
 
   // header styles
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     height: 80,
     marginTop: 10,
   },
   headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
   },
   hamburgerIcon: {
     width: 32,
@@ -106,41 +104,41 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   headerTitle: {
-    fontFamily: 'Manrope_700Bold', 
-    fontWeight: '700',
+    fontFamily: "Manrope_700Bold",
+    fontWeight: "700",
     fontSize: 18,
     letterSpacing: 1.8,
     marginLeft: 18,
-    textTransform: 'uppercase',
-    color: '#1C1917',
+    textTransform: "uppercase",
+    color: "#1C1917",
   },
   headerProfileCircle: {
     width: 48,
     height: 48,
-    backgroundColor: '#FFDAD7',
+    backgroundColor: "#FFDAD7",
     borderRadius: 24,
-    justifyContent: 'center', // center icon
-    alignItems: 'center', // center icon
+    justifyContent: "center", // center icon
+    alignItems: "center", // center icon
   },
 
   heroSection: {
     height: 120,
-    justifyContent: 'center',
+    justifyContent: "center",
     marginTop: 20,
   },
   heroText1: {
-    fontFamily: 'Manrope_800ExtraBold',
-    fontWeight: '800',
+    fontFamily: "Manrope_800ExtraBold",
+    fontWeight: "800",
     fontSize: 48,
     letterSpacing: -2.4,
-    color: '#1A1C1A',
+    color: "#1A1C1A",
   },
   heroText2: {
-    fontFamily: 'Manrope_800ExtraBold',
-    fontWeight: '800',
+    fontFamily: "Manrope_800ExtraBold",
+    fontWeight: "800",
     fontSize: 48,
     letterSpacing: -2.4,
-    color: '#A12124',
+    color: "#A12124",
   },
 
   // grid styles
@@ -149,33 +147,33 @@ const styles = StyleSheet.create({
     gap: 16, // space between rows
   },
   gridRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    justifyContent: "space-between",
     gap: 16, // space between columns
   },
   card: {
     flex: 1, // equal card spacing
-    backgroundColor: '#FFFFFF',
+    backgroundColor: "#FFFFFF",
     borderRadius: 12,
     padding: 24,
     height: 128,
-    justifyContent: 'flex-start',
-    alignItems: 'flex-start',
+    justifyContent: "flex-start",
+    alignItems: "flex-start",
     gap: 16,
   },
   cardIconCircle: {
     width: 48,
     height: 48,
-    backgroundColor: '#FFDAD7',
+    backgroundColor: "#FFDAD7",
     borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center', 
+    justifyContent: "center",
+    alignItems: "center",
   },
   cardText: {
-    fontFamily: 'Inter_700Bold',
-    fontWeight: '700',
+    fontFamily: "Inter_700Bold",
+    fontWeight: "700",
     fontSize: 12,
     letterSpacing: 0.6,
-    color: '#78716C',
+    color: "#78716C",
   },
 });
