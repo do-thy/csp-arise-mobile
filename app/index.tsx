@@ -23,7 +23,7 @@ export default function LoginScreen() {
 
           {/* catchphrase */}
           <Text style={styles.catchphraseText}>
-            Your SDCA Indoor Exploration Companion
+            Augmented Reality Interactive Spatial Explorer
           </Text>
         </View>
 
