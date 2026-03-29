@@ -41,9 +41,11 @@
         }
       ],
       [
-        "expo-camera",
+        "@reactvision/react-viro",
         {
-          "cameraPermission": "Allow ARISE to access your camera to scan room placards."
+          "ios": {
+            "cameraUsagePermission": "Allow ARISE to access your camera to scan room placards."
+          }
         }
       ],
       "expo-font"

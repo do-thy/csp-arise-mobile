@@ -1,113 +1,179 @@
 import TextRecognition from "@react-native-ml-kit/text-recognition";
-import { CameraView, useCameraPermissions } from "expo-camera";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
-import { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import {
   ActivityIndicator,
   Alert,
   Dimensions,
-  Image,
-  Modal,
+  Image as RNImage,
+  Modal, // for debugging
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
-} from "react-native"; // modal and image for debugging only
+} from "react-native";
+import {
+  ViroARScene,
+  ViroARSceneNavigator,
+  ViroImage,
+  ViroNode,
+} from "@reactvision/react-viro";
+import ViewShot from "react-native-view-shot";
 
+// room-card import
+import RoomCard from "./room-card";
+
+const { width: screenW, height: screenH } = Dimensions.get("window");
+const SCANNER_WIDTH = screenW * 0.7; // 70% of screen width
+const SCANNER_HEIGHT = SCANNER_WIDTH * 1.8; // two squares tall relative to the width
+
+// AR scene - this component lives inside the camera view
+const ARScannerScene = (props: any) => {
+  const { cardImageUri } = props.sceneNavigator.viroAppProps;
+
+  return (
+    <ViroARScene>
+      {cardImageUri ? (
+        // renders the room-card
+        <ViroNode position={[0, 0, -1.5]} scale={[0.5, 0.5, 0.5]}>
+          <ViroImage
+            source={{ uri: cardImageUri }}
+            width={1.0}
+            height={1.43} // 460 / 320 = ~1.43 aspect ratio
+            resizeMode="ScaleToFill"
+          />
+        </ViroNode>
+      ) : null}
+    </ViroARScene>
+  );
+};
+
+// main UI
 export default function RoomScanner() {
-  const [permission, requestPermission] = useCameraPermissions();
-  const cameraRef = useRef<any>(null);
+  const viroRef = useRef<any>(null);
+  const viewShotRef = useRef<any>(null); // ref for taking the snapshot
+  
+  // track exact logical dimensions of the camera view on screen
+  const [viewDims, setViewDims] = useState({ width: screenW, height: screenH });
+  
   const [isScanning, setIsScanning] = useState(false);
-  // for debugging only
   const [debugImage, setDebugImage] = useState<string | null>(null);
+  
+  // state for hardcoded logic
+  const [detectedRoomName, setDetectedRoomName] = useState<string | null>(null);
+  
+  // state to hold the final rendered image of the card
+  const [cardImageUri, setCardImageUri] = useState<string | null>(null);
 
-  if (!permission) {
-    return <View style={styles.container} />;
-  }
+  // when a room is detected, wait a split second for the off-screen view to render, then snapshot it
+  useEffect(() => {
+    if (detectedRoomName && viewShotRef.current) {
+      setTimeout(() => {
+        viewShotRef.current.capture().then((uri: string) => {
+          setCardImageUri(uri); // push the generated image to the AR scene
+        }).catch((err: any) => console.error("Snapshot failed", err));
+      }, 300); // 300ms delay to ensure proper rendering
+    } else if (!detectedRoomName) {
+      setCardImageUri(null);
+    }
+  }, [detectedRoomName]);
 
-  if (!permission.granted) {
-    return (
-      <View style={styles.container}>
-        <Text style={styles.text}>
-          Your permission is needed to use the scanner.
-        </Text>
-        <TouchableOpacity style={styles.button} onPress={requestPermission}>
-          <Text style={styles.buttonText}>Grant Permission</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
-  // triggers when the user taps the scan button
   const handleScan = async () => {
-    if (!cameraRef.current || isScanning) return;
+    if (!viroRef.current || isScanning) return;
 
     try {
       setIsScanning(true);
 
-      // 1. take photo
-      const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.5,
+      // 1. take a screenshot of the Viro AR view
+      const screenshot = await viroRef.current.sceneNavigator.takeScreenshot("scanned_image", false);
+      
+      if (!screenshot.success) throw new Error("Failed to take screenshot");
+
+      const rawImageUri = screenshot.url.startsWith("file://") 
+        ? screenshot.url 
+        : `file://${screenshot.url}`;
+
+      // 2. get the physical dimensions of the raw screenshot
+      const { width: imgW, height: imgH } = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+        RNImage.getSize(rawImageUri, 
+          (w, h) => resolve({ width: w, height: h }), 
+          reject
+        );
       });
 
-      let actualWidth = photo.width;
-      let actualHeight = photo.height;
-      let manipulator = ImageManipulator.manipulate(photo.uri);
+      // EXIF normalizer - force the engine to redraw the pixels upright to bypass the Android EXIF bug
+      // somehow necessary as without it the image cropping is completely inaccurate from the bounding box preview
+      const preProcessRef = await ImageManipulator.manipulate(rawImageUri)
+        .resize({ width: imgW, height: imgH })
+        .renderAsync();
+      
+      const preProcessPhoto = await preProcessRef.saveAsync({ 
+        compress: 1, 
+        format: SaveFormat.JPEG 
+      });
+      
+      const readyToCropUri = preProcessPhoto.uri;
 
-      // 2. fix the android "ghost rotation" bug
-      // if the photo is landscape but the phone is portrait, physically rotate it upright first
-      if (actualWidth > actualHeight) {
-        manipulator = manipulator.rotate(90);
-        actualWidth = photo.height;
-        actualHeight = photo.width;
+      // 3. cropping math
+      const screenRatio = viewDims.width / viewDims.height;
+      const imageRatio = imgW / imgH;
+
+      let scale;
+
+      if (imageRatio > screenRatio) {
+        scale = imgH / viewDims.height;
+      } else {
+        scale = imgW / viewDims.width;
       }
 
-      // 3. calculate the bounding box size (using foolproof reverse-scaling)
-      const { width: screenW, height: screenH } = Dimensions.get("window");
+      // find the center of the physical image
+      const imgCenterX = imgW / 2;
+      const imgCenterY = imgH / 2;
 
-      // find exactly how the camera feed is scaled to cover the screen
-      const scale = Math.max(screenW / actualWidth, screenH / actualHeight);
+      // calculate the size of the crop box in physical pixels
+      const cropW = SCANNER_WIDTH * scale;
+      const cropH = SCANNER_HEIGHT * scale;
 
-      // calculate how many pixels of the photo are hidden off-screen
-      const displayedW = actualWidth * scale;
-      const displayedH = actualHeight * scale;
-      const bleedX = (displayedW - screenW) / 2;
-      const bleedY = (displayedH - screenH) / 2;
+      // center the crop box on the physical image center
+      const cropX = imgCenterX - (cropW / 2);
+      const cropY = imgCenterY - (cropH / 2);
 
-      // find where the green box is on the screen
-      const uiBoxX = (screenW - SCANNER_SIZE) / 2;
-      const uiBoxY = (screenH - SCANNER_SIZE) / 3;
-
-      // map the green box location perfectly back onto the raw photo
-      const originX = (uiBoxX + bleedX) / scale;
-      const originY = (uiBoxY + bleedY) / scale;
-      const cropSize = SCANNER_SIZE / scale;
-
-      // 4. cut the image
+      // 4. crop the normalized image
+      const manipulator = ImageManipulator.manipulate(readyToCropUri);
+      
       const imageRef = await manipulator
-        .crop({ originX, originY, width: cropSize, height: cropSize })
+        .crop({ 
+          originX: Math.max(0, Math.floor(cropX)), 
+          originY: Math.max(0, Math.floor(cropY)), 
+          width: Math.floor(cropW), 
+          height: Math.floor(cropH) 
+        })
         .renderAsync();
 
       const finalCroppedPhoto = await imageRef.saveAsync({
-        compress: 1,
+        compress: 1, 
         format: SaveFormat.JPEG,
       });
-      // NOTE: the cropped image is ever so slightly smaller than the bounding box (may be due to the way the scaling and cropping math works out), therefore, to compensate, users are instructed to fit the placard fully within the bounding box and not let it touch the edges, this way the placards' paddings will compensate for this minor discrepancy and ensure all the placard text is captured in the cropped photo
 
-      // [START] DEBUGGING ONLY (showing the modal)
-      setDebugImage(finalCroppedPhoto.uri);
-      // [END] DEBUGGING ONLY
+      // [DEBUG ONLY] show cropped image in debug modal
+      // setDebugImage(finalCroppedPhoto.uri);
 
-      // 5. pass the cropped photo's local URI directly to ML Kit
+      // 5. pass to Google ML Kit
       const result = await TextRecognition.recognize(finalCroppedPhoto.uri);
 
-      // 6. data processing goes here later
-
-      // 7. extract the text and show the dialog box (temporary, replace with AR box later)
+      // 6. hardcoded logic check (to be replaced by database query in the future)
       if (result.text && result.text.trim().length > 0) {
-        Alert.alert("", result.text);
+        // normalize text to catch weird spacing or capitalizations from OCR
+        const normalizedText = result.text.toLowerCase().replace(/\s+/g, " ").trim();
+        
+        if (normalizedText.includes("computer laboratory 1") || normalizedText.includes("comp lab 1")) {
+          // push data into the state, triggering the useEffect above to snapshot the card
+          setDetectedRoomName("Computer Laboratory 1");
+        } else {
+          Alert.alert("Room Not Found", `Scanned: "${result.text}". This is not in our database.`);
+        }
       } else {
-        Alert.alert("No Text Found");
+        Alert.alert("No Text Found", "Could not read text inside the bounds.");
       }
     } catch (error) {
       console.error(error);
@@ -118,15 +184,26 @@ export default function RoomScanner() {
   };
 
   return (
-    <View style={styles.container}>
-      <CameraView style={styles.camera} facing="back" ref={cameraRef} />
-      {/* visual dark overlay with a transparent square cutout */}
-      <View style={styles.overlay}>
-        <View style={styles.unfocusedTop}></View>
-        <View style={styles.middleContainer}>
-          <View style={styles.unfocusedSide}></View>
+    <View 
+      style={styles.container} 
+      onLayout={(e) => setViewDims({ width: e.nativeEvent.layout.width, height: e.nativeEvent.layout.height })}
+    >
+      {/* ViroARSceneNavigator */}
+      <ViroARSceneNavigator
+        ref={viroRef}
+        autofocus={true}
+        initialScene={{ scene: ARScannerScene as any }}
+        viroAppProps={{ cardImageUri }} // pass the snapshot URI to the AR world
+        style={styles.camera}
+      />
 
-          {/* bounding box */}
+      {/* visual dark overlay */}
+      <View style={styles.overlay} pointerEvents="none">
+        <View style={{ height: (viewDims.height - SCANNER_HEIGHT) / 2, backgroundColor: overlayColor }} />
+        
+        <View style={{ flexDirection: "row", height: SCANNER_HEIGHT }}>
+          <View style={{ width: (viewDims.width - SCANNER_WIDTH) / 2, backgroundColor: overlayColor }} />
+
           <View style={styles.focusedBox}>
             <View style={styles.cornerTopLeft} />
             <View style={styles.cornerTopRight} />
@@ -134,36 +211,59 @@ export default function RoomScanner() {
             <View style={styles.cornerBottomRight} />
           </View>
 
-          <View style={styles.unfocusedSide}></View>
+          <View style={{ width: (viewDims.width - SCANNER_WIDTH) / 2, backgroundColor: overlayColor }} />
         </View>
-        <View style={styles.unfocusedBottom}></View>
+
+        <View style={{ flex: 1, backgroundColor: overlayColor }} />
       </View>
-      {/* scan button */}
+
+      {/* mounted off-screen so the user never sees it, but ViewShot captures it */}
+      {detectedRoomName && (
+        <View style={styles.hiddenOffScreen}>
+          <ViewShot ref={viewShotRef} options={{ format: "png", quality: 1.0 }}>
+             <RoomCard roomName={detectedRoomName} />
+          </ViewShot>
+        </View>
+      )}
+
+      {/* controls */}
       <View style={styles.controlsContainer}>
-        <Text style={styles.instructionText}>
-          Ensure the entire placard is seen in the bounding box.
-        </Text>
-        <TouchableOpacity
-          style={[styles.scanButton, isScanning && styles.scanButtonDisabled]}
-          onPress={handleScan}
-          disabled={isScanning}
-        >
-          {isScanning ? (
-            <ActivityIndicator color="white" />
-          ) : (
-            <Text style={styles.scanButtonText}>SCAN PLACARD</Text>
-          )}
-        </TouchableOpacity>
+        {detectedRoomName ? (
+          // if a room is detected, show a button to clear it to scan again
+          <TouchableOpacity
+            style={styles.clearButton}
+            onPress={() => setDetectedRoomName(null)}
+          >
+            <Text style={styles.scanButtonText}>CLOSE INFO</Text>
+          </TouchableOpacity>
+        ) : (
+          // otherwise show the normal scan button
+          <>
+            <Text style={styles.instructionText}>
+              Ensure the entire placard is inside the box.
+            </Text>
+            <TouchableOpacity
+              style={[styles.scanButton, isScanning && styles.scanButtonDisabled]}
+              onPress={handleScan}
+              disabled={isScanning}
+            >
+              {isScanning ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text style={styles.scanButtonText}>SCAN PLACARD</Text>
+              )}
+            </TouchableOpacity>
+          </>
+        )}
       </View>
-      {/* [START] DEBUGGING ONLY (showing the modal) */}
-      <Modal visible={!!debugImage} transparent={true} animationType="fade">
+
+      {/* [START] DEBUGGING ONLY (showing the modal) - COMMENTED OUT */}
+      {/* <Modal visible={!!debugImage} transparent={true} animationType="fade">
         <View style={styles.debugModalContainer}>
-          <Text>Cropped Image:</Text>
-
+          <Text style={styles.debugText}>Cropped Image:</Text>
           {debugImage && (
-            <Image source={{ uri: debugImage }} style={styles.debugImage} />
+            <RNImage source={{ uri: debugImage }} style={styles.debugImage} />
           )}
-
           <TouchableOpacity
             style={styles.debugButton}
             onPress={() => setDebugImage(null)}
@@ -172,136 +272,44 @@ export default function RoomScanner() {
           </TouchableOpacity>
         </View>
       </Modal>
+      */}
       {/* [END] DEBUGGING ONLY */}
     </View>
   );
 }
 
-const overlayColor = "rgba(20, 20, 20, 0.6)"; // dark area outside bounding box
-const { width } = Dimensions.get("window"); // grabs the screen width of the device
-const SCANNER_SIZE = width * 0.7; // sets the size of the bounding box to be 70% of the screen width
+const overlayColor = "rgba(20, 20, 20, 0.6)";
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  text: { textAlign: "center", marginBottom: 10 },
-  button: {
-    backgroundColor: "#D53E0F",
-    padding: 15,
-    borderRadius: 8,
-    alignSelf: "center",
-  },
-  buttonText: { color: "white", fontWeight: "bold" },
+  container: { flex: 1, backgroundColor: "black" },
   camera: { flex: 1 },
-
   overlay: { ...StyleSheet.absoluteFillObject },
-  unfocusedTop: { flex: 1, backgroundColor: overlayColor },
-  unfocusedSide: { flex: 1, backgroundColor: overlayColor },
-  unfocusedBottom: { flex: 2, backgroundColor: overlayColor }, // make the bottom part larger to push the bounding box upwards
-  middleContainer: {
-    flexDirection: "row",
-    height: SCANNER_SIZE,
-  },
-  focusedBox: {
-    width: SCANNER_SIZE,
-    height: SCANNER_SIZE,
-    backgroundColor: "transparent",
+  
+  // hidden renderer style
+  hiddenOffScreen: {
+    position: 'absolute',
+    left: -5000, 
+    top: 0,
   },
 
-  cornerTopLeft: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    width: 50,
-    height: 50,
-    borderColor: "#ff0000",
-    borderTopWidth: 3,
-    borderLeftWidth: 3,
-    borderTopLeftRadius: 25,
-  },
-  cornerTopRight: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    width: 50,
-    height: 50,
-    borderColor: "#ff0000",
-    borderTopWidth: 3,
-    borderRightWidth: 3,
-    borderTopRightRadius: 25,
-  },
-  cornerBottomLeft: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    width: 50,
-    height: 50,
-    borderColor: "#ff0000",
-    borderBottomWidth: 3,
-    borderLeftWidth: 3,
-    borderBottomLeftRadius: 25,
-  },
-  cornerBottomRight: {
-    position: "absolute",
-    bottom: 0,
-    right: 0,
-    width: 50,
-    height: 50,
-    borderColor: "#ff0000",
-    borderBottomWidth: 3,
-    borderRightWidth: 3,
-    borderBottomRightRadius: 25,
-  },
+  focusedBox: { width: SCANNER_WIDTH, height: SCANNER_HEIGHT, backgroundColor: "transparent" },
+  
+  cornerTopLeft: { position: "absolute", top: 0, left: 0, width: 50, height: 50, borderColor: "#ff0000", borderTopWidth: 3, borderLeftWidth: 3, borderTopLeftRadius: 25 },
+  cornerTopRight: { position: "absolute", top: 0, right: 0, width: 50, height: 50, borderColor: "#ff0000", borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 25 },
+  cornerBottomLeft: { position: "absolute", bottom: 0, left: 0, width: 50, height: 50, borderColor: "#ff0000", borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: 25 },
+  cornerBottomRight: { position: "absolute", bottom: 0, right: 0, width: 50, height: 50, borderColor: "#ff0000", borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: 25 },
 
-  controlsContainer: {
-    position: "absolute",
-    bottom: 50,
-    width: "100%",
-    alignItems: "center",
-  },
-  instructionText: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 15,
-    backgroundColor: "rgba(0, 0, 0, 0.5)", // dark background so it is readable over the camera feed
-    paddingVertical: 5,
-    paddingHorizontal: 15,
-    borderRadius: 20,
-    overflow: "hidden",
-  },
-  scanButton: {
-    backgroundColor: "#D53E0F",
-    paddingVertical: 15,
-    paddingHorizontal: 40,
-    borderRadius: 30,
-    borderWidth: 2,
-    borderColor: "white",
-  },
+  controlsContainer: { position: "absolute", bottom: 50, width: "100%", alignItems: "center" },
+  instructionText: { color: "white", fontSize: 14, fontWeight: "600", marginBottom: 15, backgroundColor: "rgba(0, 0, 0, 0.5)", paddingVertical: 5, paddingHorizontal: 15, borderRadius: 20, overflow: "hidden" },
+  scanButton: { backgroundColor: "#D53E0F", paddingVertical: 15, paddingHorizontal: 40, borderRadius: 30, borderWidth: 2, borderColor: "white" },
+  clearButton: { backgroundColor: "#333333", paddingVertical: 15, paddingHorizontal: 40, borderRadius: 30, borderWidth: 2, borderColor: "white" },
   scanButtonDisabled: { backgroundColor: "gray" },
   scanButtonText: { color: "white", fontSize: 18, fontWeight: "bold" },
+  buttonText: { color: "white", fontWeight: "bold" },
 
-  // [START] DEBUGGING ONLY (modal styles)
-  debugModalContainer: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.9)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
-  debugImage: {
-    width: SCANNER_SIZE,
-    height: SCANNER_SIZE,
-    resizeMode: "contain",
-    borderWidth: 2,
-    borderColor: "#00FF00",
-    marginVertical: 20,
-  },
+  // [DEBUG ONLY] debug styles
+  debugModalContainer: { flex: 1, backgroundColor: "rgba(0,0,0,0.9)", justifyContent: "center", alignItems: "center", padding: 20 },
+  debugImage: { width: SCANNER_WIDTH, height: SCANNER_HEIGHT, resizeMode: "contain", borderWidth: 2, borderColor: "#00FF00", marginVertical: 20 },
   debugText: { color: "white", fontSize: 18, fontWeight: "bold" },
-  debugButton: {
-    backgroundColor: "#FF3B30",
-    padding: 15,
-    borderRadius: 8,
-    marginTop: 10,
-  },
-  // [END] DEBUGGING ONLY
+  debugButton: { backgroundColor: "#FF3B30", padding: 15, borderRadius: 8, marginTop: 10 },
 });
