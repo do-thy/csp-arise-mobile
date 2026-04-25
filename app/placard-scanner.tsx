@@ -20,7 +20,10 @@ import {
 import ViewShot from "react-native-view-shot";
 
 // room-card import
-import RoomCard from "./room-card";
+import RoomCard, { RoomData } from "./room-card";
+
+// !!! HARD-CODED IP ADDRESS OF PC SERVER (cannot do localhost because phone thinks that itself is the server)
+const API_BASE_URL = "http://192.168.68.102:3000";
 
 const { width: screenW, height: screenH } = Dimensions.get("window");
 const SCANNER_WIDTH = screenW * 0.7; // 70% of screen width
@@ -58,15 +61,15 @@ export default function RoomScanner() {
   const [isScanning, setIsScanning] = useState(false);
   const [debugImage, setDebugImage] = useState<string | null>(null);
 
-  // state for hardcoded logic
-  const [detectedRoomName, setDetectedRoomName] = useState<string | null>(null);
+  // state to hold the fetched database object instead of just a string
+  const [detectedRoom, setDetectedRoom] = useState<RoomData | null>(null);
 
   // state to hold the final rendered image of the card
   const [cardImageUri, setCardImageUri] = useState<string | null>(null);
 
   // when a room is detected, wait a split second for the off-screen view to render, then snapshot it
   useEffect(() => {
-    if (detectedRoomName && viewShotRef.current) {
+    if (detectedRoom && viewShotRef.current) {
       setTimeout(() => {
         viewShotRef.current
           .capture()
@@ -75,10 +78,10 @@ export default function RoomScanner() {
           })
           .catch((err: any) => console.error("Snapshot failed", err));
       }, 300); // 300ms delay to ensure proper rendering
-    } else if (!detectedRoomName) {
+    } else if (!detectedRoom) {
       setCardImageUri(null);
     }
-  }, [detectedRoomName]);
+  }, [detectedRoom]);
 
   const handleScan = async () => {
     if (!viroRef.current || isScanning) return;
@@ -111,7 +114,6 @@ export default function RoomScanner() {
       });
 
       // EXIF normalizer - force the engine to redraw the pixels upright to bypass the Android EXIF bug
-      // somehow necessary as without it the image cropping is completely inaccurate from the bounding box preview
       const preProcessRef = await ImageManipulator.manipulate(rawImageUri)
         .resize({ width: imgW, height: imgH })
         .renderAsync();
@@ -164,32 +166,35 @@ export default function RoomScanner() {
         format: SaveFormat.JPEG,
       });
 
-      // [DEBUG ONLY] show cropped image in debug modal
-      // setDebugImage(finalCroppedPhoto.uri);
-
       // 5. pass to Google ML Kit
       const result = await TextRecognition.recognize(finalCroppedPhoto.uri);
 
-      // 6. hardcoded logic check (to be replaced by database query in the future)
+      // 6. query the Next.js database API
       if (result.text && result.text.trim().length > 0) {
-        // normalize text to catch weird spacing or capitalizations from OCR
-        const normalizedText = result.text
-          .toLowerCase()
-          .replace(/\s+/g, " ")
-          .trim();
+        const scannedText = result.text.trim();
+        
+        // securely encode the text so spaces and weird characters don't break the url
+        const encodedText = encodeURIComponent(scannedText);
+        
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/room?scannedText=${encodedText}`);
+          const jsonResponse = await response.json();
 
-        if (
-          normalizedText.includes("computer laboratory 1") ||
-          normalizedText.includes("comp lab 1")
-        ) {
-          // push data into the state, triggering the useEffect above to snapshot the card
-          setDetectedRoomName("Computer Laboratory 1");
-        } else {
-          Alert.alert(
-            "Room Not Found",
-            `Scanned: "${result.text}". This is not in our database.`,
-          );
+          if (response.ok && jsonResponse.data) {
+            // room found! push the database object into state
+            setDetectedRoom(jsonResponse.data);
+          } else {
+            // room not found in database
+            Alert.alert(
+              "Room Not Found",
+              `Scanned: "${scannedText}". This is not in our database.`
+            );
+          }
+        } catch (fetchError) {
+          console.error("Network Error:", fetchError);
+          Alert.alert("Network Error", "Could not connect to the database server. Check your computer's IP address.");
         }
+
       } else {
         Alert.alert("No Text Found", "Could not read text inside the bounds.");
       }
@@ -221,7 +226,7 @@ export default function RoomScanner() {
       />
 
       {/* visual dark overlay - hidden when a room card is displayed */}
-      {!detectedRoomName && (
+      {!detectedRoom && (
         <View style={styles.overlay} pointerEvents="none">
           <View
             style={{
@@ -258,21 +263,22 @@ export default function RoomScanner() {
       )}
 
       {/* mounted off-screen so the user never sees it, but ViewShot captures it */}
-      {detectedRoomName && (
+      {detectedRoom && (
         <View style={styles.hiddenOffScreen}>
           <ViewShot ref={viewShotRef} options={{ format: "png", quality: 1.0 }}>
-            <RoomCard roomName={detectedRoomName} />
+            {/* pass the entire fetched object down to the card */}
+            <RoomCard roomData={detectedRoom} />
           </ViewShot>
         </View>
       )}
 
       {/* controls */}
       <View style={styles.controlsContainer}>
-        {detectedRoomName ? (
+        {detectedRoom ? (
           // if a room is detected, show a button to clear it to scan again
           <TouchableOpacity
             style={styles.clearButton}
-            onPress={() => setDetectedRoomName(null)}
+            onPress={() => setDetectedRoom(null)}
           >
             <Text style={styles.scanButtonText}>CLOSE INFO</Text>
           </TouchableOpacity>
@@ -299,24 +305,6 @@ export default function RoomScanner() {
           </>
         )}
       </View>
-
-      {/* [START] DEBUGGING ONLY (showing the modal) - COMMENTED OUT */}
-      {/* <Modal visible={!!debugImage} transparent={true} animationType="fade">
-        <View style={styles.debugModalContainer}>
-          <Text style={styles.debugText}>Cropped Image:</Text>
-          {debugImage && (
-            <RNImage source={{ uri: debugImage }} style={styles.debugImage} />
-          )}
-          <TouchableOpacity
-            style={styles.debugButton}
-            onPress={() => setDebugImage(null)}
-          >
-            <Text style={styles.buttonText}>Close Preview</Text>
-          </TouchableOpacity>
-        </View>
-      </Modal>
-      */}
-      {/* [END] DEBUGGING ONLY */}
     </View>
   );
 }
@@ -422,28 +410,4 @@ const styles = StyleSheet.create({
   scanButtonDisabled: { backgroundColor: "gray" },
   scanButtonText: { color: "white", fontSize: 18, fontWeight: "bold" },
   buttonText: { color: "white", fontWeight: "bold" },
-
-  // [DEBUG ONLY] debug styles
-  debugModalContainer: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.9)",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
-  },
-  debugImage: {
-    width: SCANNER_WIDTH,
-    height: SCANNER_HEIGHT,
-    resizeMode: "contain",
-    borderWidth: 2,
-    borderColor: "#00FF00",
-    marginVertical: 20,
-  },
-  debugText: { color: "white", fontSize: 18, fontWeight: "bold" },
-  debugButton: {
-    backgroundColor: "#FF3B30",
-    padding: 15,
-    borderRadius: 8,
-    marginTop: 10,
-  },
 });

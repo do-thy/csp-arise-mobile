@@ -1,26 +1,32 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 
-type ARCardProps = {
-  roomName: string;
-  description?: string;
+// add readonly to all properties to strictly prevent mutation
+export type RoomData = {
+  readonly roomName: string;
+  readonly roomDescription: string;
+  readonly buildingName: string;
+  readonly department: string;
 };
 
-export default function RoomCard({ 
-  roomName, 
-  description = "This room is primarily used for lectures, desktop hands-on activities, and software development presentations. Please ensure all hardware is powered down after use." 
-}: ARCardProps) {
+type ARCardProps = {
+  readonly roomData: RoomData;
+};
+
+// wrap ARCardProps in the Readonly<> utility type to satisfy the linter
+export default function RoomCard({ roomData }: Readonly<ARCardProps>) {
   return (
     <View style={styles.card}>
-      {/* top: room name */}
+      {/* top: room name and location details */}
       <View style={styles.header}>
-        <Text style={styles.title}>{roomName}</Text>
+        <Text style={styles.title}>{roomData.roomName}</Text>
+        <Text style={styles.subtitle}>{roomData.buildingName} • {roomData.department}</Text>
       </View>
       
       {/* middle: description */}
       <View style={styles.descriptionContainer}>
         <Text style={styles.descriptionLabel}>DESCRIPTION</Text>
-        <Text style={styles.descriptionText}>{description}</Text>
+        <Text style={styles.descriptionText}>{roomData.roomDescription}</Text>
       </View>
 
       {/* bottom: "more info" button */}
@@ -52,6 +58,12 @@ const styles = StyleSheet.create({
     letterSpacing: -1.5,
     color: '#1A1C1A',
     lineHeight: 40,
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#A12124', 
   },
   descriptionContainer: {
     flex: 1,
