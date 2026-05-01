@@ -22,8 +22,8 @@ import ViewShot from "react-native-view-shot";
 // room-card import
 import RoomCard, { RoomData } from "./room-card";
 
-// !!! HARD-CODED IP ADDRESS OF PC SERVER (cannot do localhost because phone thinks that itself is the server)
-const API_BASE_URL = "http://192.168.120.236:3000";
+// !!! HARD-CODED IP ADDRESS OF PC SERVER
+const API_BASE_URL = "http://192.168.0.106:3000";
 
 const { width: screenW, height: screenH } = Dimensions.get("window");
 const SCANNER_WIDTH = screenW * 0.7; // 70% of screen width
@@ -36,12 +36,12 @@ const ARScannerScene = (props: any) => {
   return (
     <ViroARScene>
       {cardImageUri ? (
-        // renders the room-card
-        <ViroNode position={[0, 0, -1.5]} scale={[0.6, 0.6, 0.6]}>
+        // Changed the Y-axis from 0 to 0.8 to make it float above the door
+        <ViroNode position={[0, 1, -1.5]} scale={[0.6, 0.6, 0.6]}>
           <ViroImage
             source={{ uri: cardImageUri }}
             width={1.0}
-            height={1.43} // 460 / 320 = ~1.43 aspect ratio
+            height={1.75} // UPDATED: 560 / 320 = 1.75 aspect ratio to prevent cropping
             resizeMode="ScaleToFill"
           />
         </ViroNode>
@@ -172,9 +172,13 @@ export default function RoomScanner() {
 
       // 6. Landscape Fallback (Attempt 2: Rotated 90 Degrees)
       if (!validTextFound) {
-        console.log("No text found. Attempting 90-degree landscape rotation fallback...");
-        
-        const rotateManipulator = ImageManipulator.manipulate(finalCroppedPhoto.uri);
+        console.log(
+          "No text found. Attempting 90-degree landscape rotation fallback...",
+        );
+
+        const rotateManipulator = ImageManipulator.manipulate(
+          finalCroppedPhoto.uri,
+        );
         const rotatedRef = await rotateManipulator.rotate(90).renderAsync();
         const rotatedPhoto = await rotatedRef.saveAsync({
           compress: 1,
@@ -188,11 +192,11 @@ export default function RoomScanner() {
 
       // 7. Process Text & Query the Next.js database API
       if (validTextFound) {
-        // Strict text sanitization
+        // Strict text sanitization (includes ampersands and slashes)
         const sanitizedText = result.text
           .toLowerCase() // convert to lowercase
           .replace(/\s+/g, "") // strip all spaces and newlines
-          .replace(/[^a-z0-9\-'&\/]/g, ""); // keep ONLY letters, numbers, dashes, and apostrophes
+          .replace(/[^a-z0-9\-'&\/]/g, ""); // keep ONLY letters, numbers, dashes, apostrophes, ampersands, and slashes
 
         if (sanitizedText.length > 0) {
           // securely encode the text so weird characters don't break the url
@@ -222,10 +226,16 @@ export default function RoomScanner() {
             );
           }
         } else {
-          Alert.alert("Invalid Text", "Text was detected, but no valid alphanumeric characters were found after cleaning.");
+          Alert.alert(
+            "Invalid Text",
+            "Text was detected, but no valid alphanumeric characters were found after cleaning.",
+          );
         }
       } else {
-        Alert.alert("No Text Found", "Could not read text inside the bounds, even after rotation.");
+        Alert.alert(
+          "No Text Found",
+          "Could not read text inside the bounds, even after rotation.",
+        );
       }
     } catch (error) {
       console.error(error);
