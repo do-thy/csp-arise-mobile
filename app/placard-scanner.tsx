@@ -15,7 +15,7 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
-  View
+  View,
 } from "react-native";
 import ViewShot from "react-native-view-shot";
 
@@ -23,7 +23,7 @@ import ViewShot from "react-native-view-shot";
 import RoomCard, { RoomData } from "./room-card";
 
 // !!! HARD-CODED IP ADDRESS OF PC SERVER (cannot do localhost because phone thinks that itself is the server)
-const API_BASE_URL = "http://192.168.68.102:3000";
+const API_BASE_URL = "http://192.168.120.236:3000";
 
 const { width: screenW, height: screenH } = Dimensions.get("window");
 const SCANNER_WIDTH = screenW * 0.7; // 70% of screen width
@@ -166,37 +166,66 @@ export default function RoomScanner() {
         format: SaveFormat.JPEG,
       });
 
-      // 5. pass to Google ML Kit
-      const result = await TextRecognition.recognize(finalCroppedPhoto.uri);
+      // 5. pass to Google ML Kit (Attempt 1: Standard Orientation)
+      let result = await TextRecognition.recognize(finalCroppedPhoto.uri);
+      let validTextFound = result.text && result.text.trim().length > 0;
 
-      // 6. query the Next.js database API
-      if (result.text && result.text.trim().length > 0) {
-        const scannedText = result.text.trim();
+      // 6. Landscape Fallback (Attempt 2: Rotated 90 Degrees)
+      if (!validTextFound) {
+        console.log("No text found. Attempting 90-degree landscape rotation fallback...");
         
-        // securely encode the text so spaces and weird characters don't break the url
-        const encodedText = encodeURIComponent(scannedText);
-        
-        try {
-          const response = await fetch(`${API_BASE_URL}/api/room?scannedText=${encodedText}`);
-          const jsonResponse = await response.json();
+        const rotateManipulator = ImageManipulator.manipulate(finalCroppedPhoto.uri);
+        const rotatedRef = await rotateManipulator.rotate(90).renderAsync();
+        const rotatedPhoto = await rotatedRef.saveAsync({
+          compress: 1,
+          format: SaveFormat.JPEG,
+        });
 
-          if (response.ok && jsonResponse.data) {
-            // room found! push the database object into state
-            setDetectedRoom(jsonResponse.data);
-          } else {
-            // room not found in database
+        // re-run OCR on the rotated image
+        result = await TextRecognition.recognize(rotatedPhoto.uri);
+        validTextFound = result.text && result.text.trim().length > 0;
+      }
+
+      // 7. Process Text & Query the Next.js database API
+      if (validTextFound) {
+        // Strict text sanitization
+        const sanitizedText = result.text
+          .toLowerCase() // convert to lowercase
+          .replace(/\s+/g, "") // strip all spaces and newlines
+          .replace(/[^a-z0-9\-'&\/]/g, ""); // keep ONLY letters, numbers, dashes, and apostrophes
+
+        if (sanitizedText.length > 0) {
+          // securely encode the text so weird characters don't break the url
+          const encodedText = encodeURIComponent(sanitizedText);
+
+          try {
+            const response = await fetch(
+              `${API_BASE_URL}/api/room?scannedText=${encodedText}`,
+            );
+            const jsonResponse = await response.json();
+
+            if (response.ok && jsonResponse.data) {
+              // room found! push the database object into state
+              setDetectedRoom(jsonResponse.data);
+            } else {
+              // room not found in database
+              Alert.alert(
+                "Room Not Found",
+                `Scanned & Cleaned: "${sanitizedText}". This is not in our database.`,
+              );
+            }
+          } catch (fetchError) {
+            console.error("Network Error:", fetchError);
             Alert.alert(
-              "Room Not Found",
-              `Scanned: "${scannedText}". This is not in our database.`
+              "Network Error",
+              "Could not connect to the database server. Check your computer's IP address.",
             );
           }
-        } catch (fetchError) {
-          console.error("Network Error:", fetchError);
-          Alert.alert("Network Error", "Could not connect to the database server. Check your computer's IP address.");
+        } else {
+          Alert.alert("Invalid Text", "Text was detected, but no valid alphanumeric characters were found after cleaning.");
         }
-
       } else {
-        Alert.alert("No Text Found", "Could not read text inside the bounds.");
+        Alert.alert("No Text Found", "Could not read text inside the bounds, even after rotation.");
       }
     } catch (error) {
       console.error(error);
