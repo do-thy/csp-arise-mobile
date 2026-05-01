@@ -40,7 +40,7 @@ export default function RoomCard({ roomData }: Readonly<ARCardProps>) {
 const styles = StyleSheet.create({
   card: {
     width: 320,
-    minHeight: 460,
+    height: 560, // CHANGED from minHeight to absolute height to prevent clipping
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 24,
