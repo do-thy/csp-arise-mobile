@@ -1,0 +1,55 @@
+{
+  "project_info": {
+    "project_number": "682892051669",
+    "project_id": "arise-authentication-fda17",
+    "storage_bucket": "arise-authentication-fda17.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:682892051669:android:40fe7c5f31612ac99e0e5c",
+        "android_client_info": {
+          "package_name": "com.dothy.csparisemobile"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "682892051669-9gpdfdrknnij337vlmv890d56buau785.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.dothy.csparisemobile",
+            "certificate_hash": "041cda5052d17cbffd011bc848f56fcae2364dcc"
+          }
+        },
+        {
+          "client_id": "682892051669-bk82al0pn10aoutsq89g57rrb51om58g.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.dothy.csparisemobile",
+            "certificate_hash": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625"
+          }
+        },
+        {
+          "client_id": "682892051669-4vf43c49c72pfcvl2i3drviiu652dipv.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD8GrqwKeCReCj0pCWWCj2xU2I2xYKqCsc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "682892051669-4vf43c49c72pfcvl2i3drviiu652dipv.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
