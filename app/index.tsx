@@ -5,6 +5,7 @@ import {
   GoogleAuthProvider,
   onAuthStateChanged,
   signInWithCredential,
+  signInWithEmailAndPassword,
   User,
 } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
@@ -14,6 +15,7 @@ import {
   Alert,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -23,11 +25,15 @@ import { auth, db } from "../lib/firebase";
 export default function LoginScreen() {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [user, setUser] = useState<User | null>(null);
+  
+  // new states for email/password login
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
   useEffect(() => {
-    // initialize Google Sign-In
+    // initialize google sign-in
     GoogleSignin.configure({
-      // web client ID, not the Android/iOS one
+      // web client id, not the android/ios one
       webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID,
     });
 
@@ -45,16 +51,41 @@ export default function LoginScreen() {
     return unsubscribe;
   }, []);
 
+  const handleEmailLogin = async () => {
+    if (!email || !password) {
+      Alert.alert("Missing Fields", "Please enter both email and password.");
+      return;
+    }
+
+    try {
+      setIsAuthenticating(true);
+      
+      // sign in to firebase with email and password
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      console.log("Firebase email sign-in successful for user:", userCredential.user.email);
+      
+      // navigation is handled by the auth state listener
+    } catch (error: any) {
+      console.error("Email Sign-In error:", error);
+      Alert.alert(
+        "Login Failed",
+        error.message || "Invalid email or password."
+      );
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
   const handleGoogleLogin = async () => {
     try {
       setIsAuthenticating(true);
 
-      // check if device supports Google Play Services
+      // check if device supports google play services
       await GoogleSignin.hasPlayServices({
         showPlayServicesUpdateDialog: true,
       });
 
-      // get the response from Google
+      // get the response from google
       const response = await GoogleSignin.signIn();
       console.log("Google Sign-In response:", response);
 
@@ -69,16 +100,16 @@ export default function LoginScreen() {
 
       console.log("ID Token obtained:", idToken.substring(0, 50) + "...");
 
-      // create a Firebase credential with the Google token
+      // create a firebase credential with the google token
       const googleCredential = GoogleAuthProvider.credential(idToken);
 
-      // sign in to Firebase with the credential
+      // sign in to firebase with the credential
       const userCredential = await signInWithCredential(auth, googleCredential);
       const currentUser = userCredential.user;
 
       console.log("Firebase sign-in successful for user:", currentUser.email);
 
-      // check if user exists in Firestore
+      // check if user exists in firestore
       const docRef = doc(db, "users", currentUser.uid);
       const docSnap = await getDoc(docRef);
 
@@ -107,6 +138,11 @@ export default function LoginScreen() {
     } finally {
       setIsAuthenticating(false);
     }
+  };
+
+  // navigate to register screen
+  const navigateToRegister = () => {
+    router.push("/register");
   };
 
   // don't render login screen if user is already authenticated
@@ -145,23 +181,70 @@ export default function LoginScreen() {
           </Text>
         </View>
 
-        {/* authentication container */}
-        <View style={styles.authContainer}>
-          {/* google oauth button */}
-          <TouchableOpacity
-            style={styles.googleButton}
-            onPress={handleGoogleLogin}
-            disabled={isAuthenticating}
-          >
-            {isAuthenticating ? (
-              <ActivityIndicator color="#1A1C1A" size="small" />
-            ) : (
+        {/* interaction section */}
+        <View style={styles.interactionSection}>
+          {/* email and password form */}
+          <View style={styles.formContainer}>
+            <TextInput
+              style={styles.input}
+              placeholder="Email address"
+              placeholderTextColor="#8C8886"
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              editable={!isAuthenticating}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
+              placeholderTextColor="#8C8886"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+              editable={!isAuthenticating}
+            />
+            
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={handleEmailLogin}
+              disabled={isAuthenticating}
+            >
+              {isAuthenticating ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Sign In</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          {/* visual divider */}
+          <View style={styles.dividerContainer}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>or continue with</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          {/* google oauth container */}
+          <View style={styles.authContainer}>
+            <TouchableOpacity
+              style={styles.googleButton}
+              onPress={handleGoogleLogin}
+              disabled={isAuthenticating}
+            >
               <Ionicons name="logo-google" size={20} color="#1A1C1A" />
-            )}
-            <Text style={styles.buttonText}>
-              {isAuthenticating ? "Signing in..." : "Sign in with Google"}
-            </Text>
-          </TouchableOpacity>
+              <Text style={styles.buttonText}>Google</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* register prompt */}
+          <View style={styles.registerContainer}>
+            <Text style={styles.registerText}>Do not have an account? </Text>
+            <TouchableOpacity onPress={navigateToRegister} disabled={isAuthenticating}>
+              <Text style={styles.registerLink}>Register</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     </SafeAreaView>
@@ -191,7 +274,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     width: "100%",
     maxWidth: 384,
-    marginBottom: 64,
+    marginBottom: 48,
     zIndex: 1,
   },
   logoContainer: {
@@ -201,7 +284,7 @@ const styles = StyleSheet.create({
     borderRadius: 40,
     justifyContent: "center",
     alignItems: "center",
-    marginBottom: 32,
+    marginBottom: 24,
   },
   logoInnerSquare: {
     width: 40,
@@ -226,13 +309,67 @@ const styles = StyleSheet.create({
     opacity: 0.8,
     textAlign: "center",
   },
+  interactionSection: {
+    width: "100%",
+    maxWidth: 342,
+    zIndex: 1,
+  },
+  formContainer: {
+    gap: 16,
+    marginBottom: 24,
+  },
+  input: {
+    height: 56,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    paddingHorizontal: 20,
+    fontSize: 16,
+    fontFamily: "Inter_400Regular",
+    color: "#1A1C1A",
+    borderWidth: 1,
+    borderColor: "#EAE8E3",
+  },
+  primaryButton: {
+    height: 56,
+    backgroundColor: "#A12124",
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: 8,
+    shadowColor: "#A12124",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 4,
+  },
+  primaryButtonText: {
+    fontFamily: "Inter_400Regular",
+    fontWeight: "600",
+    fontSize: 16,
+    color: "#FFFFFF",
+  },
+  dividerContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 24,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "#EAE8E3",
+  },
+  dividerText: {
+    paddingHorizontal: 16,
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    color: "#8C8886",
+  },
   authContainer: {
-    width: 342,
+    width: "100%",
     height: 72,
     backgroundColor: "#F4F3F1",
     borderRadius: 36,
     padding: 8,
-    zIndex: 1,
   },
   googleButton: {
     flex: 1,
@@ -241,12 +378,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#FFFFFF",
     borderRadius: 28,
-    gap: 16,
+    gap: 12,
     shadowColor: "#1A1C1A",
-    shadowOffset: { width: 0, height: 12 },
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.04,
-    shadowRadius: 32,
-    elevation: 3,
+    shadowRadius: 12,
+    elevation: 2,
   },
   buttonText: {
     fontFamily: "Inter_400Regular",
@@ -254,5 +391,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
     letterSpacing: -0.35,
     color: "#1A1C1A",
+  },
+  registerContainer: {
+    flexDirection: "row",
+    justifyContent: "center",
+    marginTop: 32,
+  },
+  registerText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    color: "#59413F",
+  },
+  registerLink: {
+    fontFamily: "Inter_400Regular",
+    fontWeight: "600",
+    fontSize: 14,
+    color: "#A12124",
   },
 });
