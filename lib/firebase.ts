@@ -3,8 +3,6 @@ import { initializeAuth, getReactNativePersistence } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getDatabase } from "firebase/database";
 import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
-import { measure } from "react-native-reanimated";
-import { getAnalytics } from "firebase/analytics";
 
 
 // web app's Firebase configuration
@@ -21,7 +19,6 @@ const firebaseConfig = {
 
 // initialize Firebase
 const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
 
 // initialize Auth with React Native persistence
 export const auth = initializeAuth(app, {
