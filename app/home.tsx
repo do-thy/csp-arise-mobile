@@ -20,7 +20,7 @@ export default function HomeScreen() {
       // attempt to sign out of google if they used oauth
       try {
         await GoogleSignin.signOut();
-      } catch (e) {
+      } catch {
         // silently ignore if they weren't signed in with google
       }
       
@@ -97,7 +97,7 @@ export default function HomeScreen() {
           </TouchableOpacity>
 
           {/* navigation card */}
-          <TouchableOpacity style={styles.card}>
+          <TouchableOpacity style={styles.card} onPress={() => router.push("/navigation" as any)}>
             <View style={styles.cardIconCircle}>
               <Ionicons name="navigate-outline" size={24} color="#1C1917" />
             </View>
