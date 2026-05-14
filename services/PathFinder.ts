@@ -4,7 +4,7 @@ type AriseNode = {
   posY?: string | number;
   posZ?: string | number;
   neighbors?: string[];
-  rooms?: Array<{ roomName?: string }>;
+  rooms?: any[];
 };
 
 type NodeMap = Record<string, AriseNode>;
@@ -32,8 +32,16 @@ export const findPath = (
   targetNodeID: string,
   allNodes: NodeMap
 ): AriseNode[] | null => {
-  const start = startNodeID.trim();
-  const target = targetNodeID.trim();
+  const findActualID = (id: string) => {
+    if (allNodes[id]) return id;
+    const trimmed = id.trim();
+    if (allNodes[trimmed]) return trimmed;
+    const found = Object.keys(allNodes).find(key => key.toLowerCase() === trimmed.toLowerCase());
+    return found || trimmed;
+  };
+
+  const start = findActualID(startNodeID);
+  const target = findActualID(targetNodeID);
 
   if (!allNodes[start] || !allNodes[target]) {
     console.error(`MISSING IN DATABASE: Start(${start}) or Target(${target})`);
@@ -58,12 +66,9 @@ export const findPath = (
 
     for (const rawNeighborID of neighbors) {
       const neighborID = rawNeighborID.trim();
-      const cleanID = neighborID.replace("main_campus_parent_", "").trim();
-      const finalNeighborID =
-        allNodes[neighborID] ||
-        Object.keys(allNodes).find(
-          (key) => key === cleanID || key.endsWith(cleanID)
-        );
+      const finalNeighborID = allNodes[neighborID] ? neighborID :
+        allNodes[neighborID.replace("main_campus_parent_", "")] ? neighborID.replace("main_campus_parent_", "") :
+        Object.keys(allNodes).find(key => key === neighborID || key.endsWith(neighborID.replace("main_campus_parent_", ""))) || neighborID;
 
       if (finalNeighborID && !visited.has(finalNeighborID)) {
         visited.add(finalNeighborID);

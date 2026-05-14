@@ -14,7 +14,7 @@ const VERTICAL_SCALE = 0.14;
 type NavigationSceneProps = {
   sceneNavigator: {
     viroAppProps: {
-      path: Array<any>;
+      path: any[];
       lineColor: string;
       yOffset: number | string;
       startNode?: any;
@@ -51,7 +51,7 @@ export function NavigationScene(props: NavigationSceneProps) {
   const points = useMemo(() => {
     if (!path || path.length < 2) return [];
 
-    return path.map((node) => {
+    return path.map((node): [number, number, number] => {
       const rawX = parseFloat(node.posX || 0) - parseFloat(safeStart?.posX || 0);
       const rawZ = parseFloat(node.posZ || 0) - parseFloat(safeStart?.posZ || 0);
       const rawY = parseFloat(node.posY || 0) - parseFloat(safeStart?.posY || 0);

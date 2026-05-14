@@ -194,7 +194,7 @@ export default function NavigationScreen() {
         <View style={{ flex: 1 }}>
           <ViroARSceneNavigator
             autofocus
-            initialScene={{ scene: NavigationScene }}
+            initialScene={{ scene: NavigationScene as any }}
             viroAppProps={{
               path,
               lineColor: liveSettings.lineColor,
