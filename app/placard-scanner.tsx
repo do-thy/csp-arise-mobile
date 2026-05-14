@@ -25,7 +25,7 @@ import ViewShot from "react-native-view-shot";
 import RoomCard, { RoomData } from "./room-card";
 
 // !!! HARD-CODED IP ADDRESS OF PC SERVER
-const API_BASE_URL = "http://192.168.68.103:3000";
+const API_BASE_URL = process.env.EXPO_PUBLIC_MAP_URL;
 
 // Threshold for auto-selecting a fuzzy match
 const HIGH_CONFIDENCE_THRESHOLD = 0.92;

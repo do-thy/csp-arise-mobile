@@ -86,7 +86,10 @@ export default function HomeScreen() {
           </TouchableOpacity>
 
           {/* 3D map card */}
-          <TouchableOpacity style={styles.card}>
+          <TouchableOpacity 
+            style={styles.card}
+            onPress={() => router.push("/3d-map")}
+          >
             <View style={styles.cardIconCircle}>
               <Ionicons name="cube-outline" size={24} color="#1C1917" />
             </View>
