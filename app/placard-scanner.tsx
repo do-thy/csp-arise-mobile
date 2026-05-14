@@ -11,10 +11,12 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
-  Image as RNImage, // for debugging
+  Image as RNImage,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
+  Vibration,
   View,
 } from "react-native";
 import ViewShot from "react-native-view-shot";
@@ -23,7 +25,10 @@ import ViewShot from "react-native-view-shot";
 import RoomCard, { RoomData } from "./room-card";
 
 // !!! HARD-CODED IP ADDRESS OF PC SERVER
-const API_BASE_URL = "http://192.168.0.106:3000";
+const API_BASE_URL = "http://192.168.68.103:3000";
+
+// Threshold for auto-selecting a fuzzy match
+const HIGH_CONFIDENCE_THRESHOLD = 0.92;
 
 const { width: screenW, height: screenH } = Dimensions.get("window");
 const SCANNER_WIDTH = screenW * 0.7; // 70% of screen width
@@ -36,7 +41,6 @@ const ARScannerScene = (props: any) => {
   return (
     <ViroARScene>
       {cardImageUri ? (
-        // Changed the Y-axis from 0 to 0.8 to make it float above the door
         <ViroNode position={[0, 1, -1.5]} scale={[0.6, 0.6, 0.6]}>
           <ViroImage
             source={{ uri: cardImageUri }}
@@ -59,13 +63,66 @@ export default function RoomScanner() {
   const [viewDims, setViewDims] = useState({ width: screenW, height: screenH });
 
   const [isScanning, setIsScanning] = useState(false);
-  const [debugImage, setDebugImage] = useState<string | null>(null);
 
   // state to hold the fetched database object instead of just a string
   const [detectedRoom, setDetectedRoom] = useState<RoomData | null>(null);
 
   // state to hold the final rendered image of the card
   const [cardImageUri, setCardImageUri] = useState<string | null>(null);
+
+  // NEW: Fuzzy match state
+  const [fuzzyMatches, setFuzzyMatches] = useState<(RoomData & { matchScore: number })[]>([]);
+  const [lastScannedText, setLastScannedText] = useState<string>("");
+
+  // Fetch fuzzy matches when exact match fails
+  const fetchFuzzyMatches = async (sanitizedText: string) => {
+    try {
+      const encodedText = encodeURIComponent(sanitizedText);
+      const response = await fetch(
+        `${API_BASE_URL}/api/room/fuzzy?scannedText=${encodedText}&limit=3`, // limited to 3 for inline UI
+      );
+      const jsonResponse = await response.json();
+
+      if (response.ok && jsonResponse.data && Array.isArray(jsonResponse.data) && jsonResponse.data.length > 0) {
+        const topMatch = jsonResponse.data[0];
+
+        // AUTO-SELECT LOGIC
+        if (topMatch.matchScore >= HIGH_CONFIDENCE_THRESHOLD) {
+          Vibration.vibrate(100); // Quick success buzz
+          setDetectedRoom(topMatch);
+          setFuzzyMatches([]);
+          setLastScannedText("");
+        } else {
+          // REQUIRE USER SELECTION
+          Vibration.vibrate([0, 50, 100, 50]); // Distinct "attention needed" pattern
+          setFuzzyMatches(jsonResponse.data);
+          setLastScannedText(sanitizedText);
+        }
+      } else {
+        Alert.alert(
+          "No Matches Found",
+          `Scanned & Cleaned: "${sanitizedText}". No similar rooms found in database.`,
+        );
+      }
+    } catch (fetchError) {
+      console.error("Fuzzy search error:", fetchError);
+      Alert.alert(
+        "Fuzzy Search Error",
+        "Could not search for similar matches. Check your connection.",
+      );
+    }
+  };
+
+  const handleSelectFuzzyMatch = (room: RoomData) => {
+    Vibration.vibrate(50); // Small tactile click
+    setDetectedRoom(room);
+    setFuzzyMatches([]);
+  };
+
+  const handleDismissFuzzyDropdown = () => {
+    setFuzzyMatches([]);
+    setLastScannedText("");
+  };
 
   // when a room is detected, wait a split second for the off-screen view to render, then snapshot it
   useEffect(() => {
@@ -88,6 +145,8 @@ export default function RoomScanner() {
 
     try {
       setIsScanning(true);
+      setFuzzyMatches([]); // clear any old suggestions
+      Vibration.vibrate(50); // Tap to indicate scan started
 
       // 1. take a screenshot of the Viro AR view
       const screenshot = await viroRef.current.sceneNavigator.takeScreenshot(
@@ -113,7 +172,7 @@ export default function RoomScanner() {
         );
       });
 
-      // EXIF normalizer - force the engine to redraw the pixels upright to bypass the Android EXIF bug
+      // EXIF normalizer
       const preProcessRef = await ImageManipulator.manipulate(rawImageUri)
         .resize({ width: imgW, height: imgH })
         .renderAsync();
@@ -130,28 +189,21 @@ export default function RoomScanner() {
       const imageRatio = imgW / imgH;
 
       let scale;
-
       if (imageRatio > screenRatio) {
         scale = imgH / viewDims.height;
       } else {
         scale = imgW / viewDims.width;
       }
 
-      // find the center of the physical image
       const imgCenterX = imgW / 2;
       const imgCenterY = imgH / 2;
-
-      // calculate the size of the crop box in physical pixels
       const cropW = SCANNER_WIDTH * scale;
       const cropH = SCANNER_HEIGHT * scale;
-
-      // center the crop box on the physical image center
       const cropX = imgCenterX - cropW / 2;
       const cropY = imgCenterY - cropH / 2;
 
       // 4. crop the normalized image
       const manipulator = ImageManipulator.manipulate(readyToCropUri);
-
       const imageRef = await manipulator
         .crop({
           originX: Math.max(0, Math.floor(cropX)),
@@ -166,16 +218,12 @@ export default function RoomScanner() {
         format: SaveFormat.JPEG,
       });
 
-      // 5. pass to Google ML Kit (Attempt 1: Standard Orientation)
+      // 5. pass to Google ML Kit
       let result = await TextRecognition.recognize(finalCroppedPhoto.uri);
       let validTextFound = result.text && result.text.trim().length > 0;
 
-      // 6. Landscape Fallback (Attempt 2: Rotated 90 Degrees)
+      // 6. Landscape Fallback
       if (!validTextFound) {
-        console.log(
-          "No text found. Attempting 90-degree landscape rotation fallback...",
-        );
-
         const rotateManipulator = ImageManipulator.manipulate(
           finalCroppedPhoto.uri,
         );
@@ -185,21 +233,18 @@ export default function RoomScanner() {
           format: SaveFormat.JPEG,
         });
 
-        // re-run OCR on the rotated image
         result = await TextRecognition.recognize(rotatedPhoto.uri);
         validTextFound = result.text && result.text.trim().length > 0;
       }
 
-      // 7. Process Text & Query the Next.js database API
+      // 7. Process Text & Query DB
       if (validTextFound) {
-        // Strict text sanitization (includes ampersands and slashes)
         const sanitizedText = result.text
-          .toLowerCase() // convert to lowercase
-          .replace(/\s+/g, "") // strip all spaces and newlines
-          .replace(/[^a-z0-9\-'&\/]/g, ""); // keep ONLY letters, numbers, dashes, apostrophes, ampersands, and slashes
+          .toLowerCase()
+          .replace(/\s+/g, "")
+          .replace(/[^a-z0-9\-'&\/]/g, "");
 
         if (sanitizedText.length > 0) {
-          // securely encode the text so weird characters don't break the url
           const encodedText = encodeURIComponent(sanitizedText);
 
           try {
@@ -209,33 +254,20 @@ export default function RoomScanner() {
             const jsonResponse = await response.json();
 
             if (response.ok && jsonResponse.data) {
-              // room found! push the database object into state
+              Vibration.vibrate(100); // Exact match success
               setDetectedRoom(jsonResponse.data);
             } else {
-              // room not found in database
-              Alert.alert(
-                "Room Not Found",
-                `Scanned & Cleaned: "${sanitizedText}". This is not in our database.`,
-              );
+              await fetchFuzzyMatches(sanitizedText);
             }
           } catch (fetchError) {
             console.error("Network Error:", fetchError);
-            Alert.alert(
-              "Network Error",
-              "Could not connect to the database server. Check your computer's IP address.",
-            );
+            Alert.alert("Network Error", "Could not connect to the database.");
           }
         } else {
-          Alert.alert(
-            "Invalid Text",
-            "Text was detected, but no valid alphanumeric characters were found after cleaning.",
-          );
+          Alert.alert("Invalid Text", "No valid characters found.");
         }
       } else {
-        Alert.alert(
-          "No Text Found",
-          "Could not read text inside the bounds, even after rotation.",
-        );
+        Alert.alert("No Text Found", "Could not read text inside the bounds.");
       }
     } catch (error) {
       console.error(error);
@@ -244,6 +276,14 @@ export default function RoomScanner() {
       setIsScanning(false);
     }
   };
+
+  // Dynamic values for overlay layout
+  const topMaskHeight = (viewDims.height - SCANNER_HEIGHT) / 2;
+  const sideMaskWidth = (viewDims.width - SCANNER_WIDTH) / 2;
+  const isSuggestingFuzzy = fuzzyMatches.length > 0;
+  
+  // Dynamic color for scanner box
+  const cornerColor = isSuggestingFuzzy ? "#FFD700" : "#ff0000"; 
 
   return (
     <View
@@ -255,57 +295,74 @@ export default function RoomScanner() {
         })
       }
     >
-      {/* ViroARSceneNavigator */}
       <ViroARSceneNavigator
         ref={viroRef}
         autofocus={true}
         initialScene={{ scene: ARScannerScene as any }}
-        viroAppProps={{ cardImageUri }} // pass the snapshot URI to the AR world
+        viroAppProps={{ cardImageUri }}
         style={styles.camera}
       />
 
-      {/* visual dark overlay - hidden when a room card is displayed */}
       {!detectedRoom && (
-        <View style={styles.overlay} pointerEvents="none">
-          <View
-            style={{
-              height: (viewDims.height - SCANNER_HEIGHT) / 2,
-              backgroundColor: overlayColor,
-            }}
-          />
+        <View style={styles.overlay} pointerEvents="box-none">
+          {/* Top Mask */}
+          <View style={{ height: topMaskHeight, backgroundColor: overlayColor }} pointerEvents="none" />
 
-          <View style={{ flexDirection: "row", height: SCANNER_HEIGHT }}>
-            <View
-              style={{
-                width: (viewDims.width - SCANNER_WIDTH) / 2,
-                backgroundColor: overlayColor,
-              }}
-            />
+          {/* Middle Row */}
+          <View style={{ flexDirection: "row", height: SCANNER_HEIGHT }} pointerEvents="none">
+            <View style={{ width: sideMaskWidth, backgroundColor: overlayColor }} />
 
             <View style={styles.focusedBox}>
-              <View style={styles.cornerTopLeft} />
-              <View style={styles.cornerTopRight} />
-              <View style={styles.cornerBottomLeft} />
-              <View style={styles.cornerBottomRight} />
+              <View style={[styles.cornerTopLeft, { borderColor: cornerColor }]} />
+              <View style={[styles.cornerTopRight, { borderColor: cornerColor }]} />
+              <View style={[styles.cornerBottomLeft, { borderColor: cornerColor }]} />
+              <View style={[styles.cornerBottomRight, { borderColor: cornerColor }]} />
             </View>
 
-            <View
-              style={{
-                width: (viewDims.width - SCANNER_WIDTH) / 2,
-                backgroundColor: overlayColor,
-              }}
-            />
+            <View style={{ width: sideMaskWidth, backgroundColor: overlayColor }} />
           </View>
 
-          <View style={{ flex: 1, backgroundColor: overlayColor }} />
+          {/* Bottom Mask */}
+          <View style={{ flex: 1, backgroundColor: overlayColor }} pointerEvents="none" />
+
+          {/* INLINE FUZZY VIEWFINDER (Positioned absolutely so it accepts touches properly) */}
+          {isSuggestingFuzzy && (
+            <View style={[styles.inlineFuzzyWrapper, { top: topMaskHeight + SCANNER_HEIGHT + 15 }]}>
+              <Text style={styles.inlineFuzzyTitle}>
+                No exact match. Did you mean?
+              </Text>
+              
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.fuzzyPillsScroll}
+              >
+                {fuzzyMatches.map((match, idx) => (
+                  <TouchableOpacity
+                    key={idx}
+                    style={styles.fuzzyPill}
+                    onPress={() => handleSelectFuzzyMatch(match)}
+                  >
+                    <Text style={styles.fuzzyPillRoom}>{match.roomName}</Text>
+                    <Text style={styles.fuzzyPillSub}>
+                       {Math.round((match.matchScore || 0) * 100)}% Match
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              <TouchableOpacity style={styles.fuzzyInlineCancel} onPress={handleDismissFuzzyDropdown}>
+                <Text style={styles.fuzzyInlineCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       )}
 
-      {/* mounted off-screen so the user never sees it, but ViewShot captures it */}
+      {/* hidden off-screen renderer for view-shot */}
       {detectedRoom && (
         <View style={styles.hiddenOffScreen}>
           <ViewShot ref={viewShotRef} options={{ format: "png", quality: 1.0 }}>
-            {/* pass the entire fetched object down to the card */}
             <RoomCard roomData={detectedRoom} />
           </ViewShot>
         </View>
@@ -314,34 +371,37 @@ export default function RoomScanner() {
       {/* controls */}
       <View style={styles.controlsContainer}>
         {detectedRoom ? (
-          // if a room is detected, show a button to clear it to scan again
           <TouchableOpacity
             style={styles.clearButton}
-            onPress={() => setDetectedRoom(null)}
+            onPress={() => {
+              Vibration.vibrate(50);
+              setDetectedRoom(null);
+            }}
           >
             <Text style={styles.scanButtonText}>CLOSE INFO</Text>
           </TouchableOpacity>
         ) : (
-          // otherwise show the normal scan button
-          <>
-            <Text style={styles.instructionText}>
-              Ensure the entire placard is inside the box.
-            </Text>
-            <TouchableOpacity
-              style={[
-                styles.scanButton,
-                isScanning && styles.scanButtonDisabled,
-              ]}
-              onPress={handleScan}
-              disabled={isScanning}
-            >
-              {isScanning ? (
-                <ActivityIndicator color="white" />
-              ) : (
-                <Text style={styles.scanButtonText}>SCAN PLACARD</Text>
-              )}
-            </TouchableOpacity>
-          </>
+          !isSuggestingFuzzy && (
+            <>
+              <Text style={styles.instructionText}>
+                Ensure the entire placard is inside the box.
+              </Text>
+              <TouchableOpacity
+                style={[
+                  styles.scanButton,
+                  isScanning && styles.scanButtonDisabled,
+                ]}
+                onPress={handleScan}
+                disabled={isScanning}
+              >
+                {isScanning ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <Text style={styles.scanButtonText}>SCAN PLACARD</Text>
+                )}
+              </TouchableOpacity>
+            </>
+          )
         )}
       </View>
     </View>
@@ -355,7 +415,6 @@ const styles = StyleSheet.create({
   camera: { flex: 1 },
   overlay: { ...StyleSheet.absoluteFillObject },
 
-  // hidden renderer style
   hiddenOffScreen: {
     position: "absolute",
     left: -5000,
@@ -367,51 +426,10 @@ const styles = StyleSheet.create({
     height: SCANNER_HEIGHT,
     backgroundColor: "transparent",
   },
-
-  cornerTopLeft: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    width: 50,
-    height: 50,
-    borderColor: "#ff0000",
-    borderTopWidth: 3,
-    borderLeftWidth: 3,
-    borderTopLeftRadius: 25,
-  },
-  cornerTopRight: {
-    position: "absolute",
-    top: 0,
-    right: 0,
-    width: 50,
-    height: 50,
-    borderColor: "#ff0000",
-    borderTopWidth: 3,
-    borderRightWidth: 3,
-    borderTopRightRadius: 25,
-  },
-  cornerBottomLeft: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    width: 50,
-    height: 50,
-    borderColor: "#ff0000",
-    borderBottomWidth: 3,
-    borderLeftWidth: 3,
-    borderBottomLeftRadius: 25,
-  },
-  cornerBottomRight: {
-    position: "absolute",
-    bottom: 0,
-    right: 0,
-    width: 50,
-    height: 50,
-    borderColor: "#ff0000",
-    borderBottomWidth: 3,
-    borderRightWidth: 3,
-    borderBottomRightRadius: 25,
-  },
+  cornerTopLeft: { position: "absolute", top: 0, left: 0, width: 50, height: 50, borderTopWidth: 3, borderLeftWidth: 3, borderTopLeftRadius: 25 },
+  cornerTopRight: { position: "absolute", top: 0, right: 0, width: 50, height: 50, borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 25 },
+  cornerBottomLeft: { position: "absolute", bottom: 0, left: 0, width: 50, height: 50, borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: 25 },
+  cornerBottomRight: { position: "absolute", bottom: 0, right: 0, width: 50, height: 50, borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: 25 },
 
   controlsContainer: {
     position: "absolute",
@@ -448,5 +466,60 @@ const styles = StyleSheet.create({
   },
   scanButtonDisabled: { backgroundColor: "gray" },
   scanButtonText: { color: "white", fontSize: 18, fontWeight: "bold" },
-  buttonText: { color: "white", fontWeight: "bold" },
+
+  // INLINE FUZZY STYLES
+  inlineFuzzyWrapper: {
+    position: "absolute",
+    width: "100%",
+    alignItems: "center",
+  },
+  inlineFuzzyTitle: {
+    color: "#FFD700",
+    fontSize: 16,
+    fontWeight: "700",
+    marginBottom: 12,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  fuzzyPillsScroll: {
+    paddingHorizontal: 20,
+    gap: 12, // React Native 0.71+ supports gap
+  },
+  fuzzyPill: {
+    backgroundColor: "white",
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 24,
+    marginRight: 12, // fallback if gap isn't supported
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+  },
+  fuzzyPillRoom: {
+    color: "#1A1C1A",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  fuzzyPillSub: {
+    color: "#A12124",
+    fontSize: 12,
+    fontWeight: "600",
+    marginTop: 2,
+  },
+  fuzzyInlineCancel: {
+    marginTop: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+  },
+  fuzzyInlineCancelText: {
+    color: "white",
+    fontSize: 15,
+    fontWeight: "600",
+    textDecorationLine: "underline",
+  },
 });
