@@ -6,6 +6,21 @@ import { StyleSheet, TouchableOpacity, View, ActivityIndicator } from "react-nat
 import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 
+const injectedViewportScript = `
+  (function() {
+    var meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) {
+      meta = document.createElement('meta');
+      meta.name = 'viewport';
+      meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+      document.head.appendChild(meta);
+    } else {
+      meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
+    }
+  })();
+  true;
+`;
+
 export default function ThreeDMapScreen() {
   // Pull the URL from your environment variables
   // Fallback to a safe default if the env var fails to load
@@ -24,6 +39,9 @@ export default function ThreeDMapScreen() {
         source={{ uri: mapUrl }}
         style={styles.webview}
         startInLoadingState={true}
+        injectedJavaScriptBeforeContentLoaded={injectedViewportScript}
+        scalesPageToFit={true}
+        automaticallyAdjustContentInsets={false}
         renderLoading={() => (
           <View style={styles.loaderContainer}>
             <ActivityIndicator size="large" color="#A12124" />
