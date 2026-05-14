@@ -1,10 +1,12 @@
 // app/3d-map.tsx
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { StyleSheet, TouchableOpacity, View, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
+import { getIdToken } from "firebase/auth";
+import { auth } from "../lib/firebase";
 
 const injectedViewportScript = `
   (function() {
@@ -21,14 +23,51 @@ const injectedViewportScript = `
   true;
 `;
 
+const appendQueryParam = (url: string, key: string, value: string) => {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set(key, value);
+    return parsed.toString();
+  } catch {
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+  }
+};
+
 export default function ThreeDMapScreen() {
-  // Pull the URL from your environment variables
-  // Fallback to a safe default if the env var fails to load
-  const mapUrl = process.env.EXPO_PUBLIC_MAP_URL || "https://google.com";
+  const baseMapUrl = process.env.EXPO_PUBLIC_MAP_URL || "https://google.com";
+  const [webViewUrl, setWebViewUrl] = useState(baseMapUrl);
+
+  useEffect(() => {
+    const user = auth.currentUser;
+    if (!user) {
+      setWebViewUrl(baseMapUrl);
+      return;
+    }
+
+    let isMounted = true;
+    const attachToken = async () => {
+      try {
+        const idToken = await getIdToken(user, true);
+        if (isMounted) {
+          setWebViewUrl(appendQueryParam(baseMapUrl, "mobileAuthToken", idToken));
+        }
+      } catch (error) {
+        console.error("Failed to attach mobile auth token:", error);
+        if (isMounted) {
+          setWebViewUrl(baseMapUrl);
+        }
+      }
+    };
+
+    attachToken();
+    return () => {
+      isMounted = false;
+    };
+  }, [baseMapUrl]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      {/* custom header for navigation */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#1C1917" />
@@ -36,7 +75,7 @@ export default function ThreeDMapScreen() {
       </View>
 
       <WebView
-        source={{ uri: mapUrl }}
+        source={{ uri: webViewUrl }}
         style={styles.webview}
         startInLoadingState={true}
         injectedJavaScriptBeforeContentLoaded={injectedViewportScript}
@@ -47,7 +86,6 @@ export default function ThreeDMapScreen() {
             <ActivityIndicator size="large" color="#A12124" />
           </View>
         )}
-        // These settings are often required for 3D/WebGL experiences to run smoothly
         javaScriptEnabled={true}
         domStorageEnabled={true}
         allowsInlineMediaPlayback={true}
