@@ -113,4 +113,22 @@ export const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 8,
   },
+  suggestionContainer: {
+    marginTop: 8,
+    borderRadius: 12,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: "#EAE8E3",
+    overflow: "hidden",
+  },
+  suggestionItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F4F3F1",
+  },
+  suggestionText: {
+    color: COLORS.text,
+    fontSize: 15,
+  },
 });

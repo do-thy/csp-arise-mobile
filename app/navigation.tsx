@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Alert, ActivityIndicator, StatusBar, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MapPin, Search, School, Cpu } from "lucide-react-native";
@@ -17,6 +17,7 @@ export default function NavigationScreen() {
   const [selectedBuilding, setSelectedBuilding] = useState("ALL");
   const [nodeMap, setNodeMap] = useState<Record<string, any>>({});
   const [lookupMap, setLookupMap] = useState<Record<string, string>>({});
+  const [roomOptions, setRoomOptions] = useState<Array<{ roomName: string; normalized: string; nodeId: string }>>([]);
   const [startID, setStartID] = useState("");
   const [endID, setEndID] = useState("");
   const [path, setPath] = useState<any[]>([]);
@@ -25,6 +26,27 @@ export default function NavigationScreen() {
     yOffset: -1.2,
   });
 
+  const addRoomOption = (room: any, docId: string, nameMap: Record<string, string>, roomList: Array<{ roomName: string; normalized: string; nodeId: string }>) => {
+    const normalized = room.roomName.toLowerCase().trim();
+    nameMap[normalized] = docId;
+    roomList.push({ roomName: room.roomName, normalized, nodeId: docId });
+  };
+
+  const addRoomOptions = (
+    rooms: any,
+    docId: string,
+    nameMap: Record<string, string>,
+    roomList: Array<{ roomName: string; normalized: string; nodeId: string }>
+  ) => {
+    if (!rooms || !Array.isArray(rooms)) return;
+
+    rooms.forEach((room: any) => {
+      if (room.roomName) {
+        addRoomOption(room, docId, nameMap, roomList);
+      }
+    });
+  };
+
   useEffect(() => {
     const settingsRef = ref(rtdb, "settings");
     const unsubscribe = onValue(settingsRef, (snapshot) => {
@@ -32,7 +54,7 @@ export default function NavigationScreen() {
       if (data) {
         setLiveSettings({
           lineColor: data.lineColor || COLORS.primary,
-          yOffset: parseFloat(data.yOffset) ?? -1.2,
+          yOffset: Number.parseFloat(data.yOffset) ?? -1.2,
         });
       }
     });
@@ -48,6 +70,7 @@ export default function NavigationScreen() {
         const querySnapshot = await getDocs(nodesCol);
         const rawMap: Record<string, any> = {};
         const nameMap: Record<string, string> = {};
+        const roomList: Array<{ roomName: string; normalized: string; nodeId: string }> = [];
 
         querySnapshot.forEach((doc) => {
           const data = doc.data();
@@ -60,18 +83,14 @@ export default function NavigationScreen() {
             selectedBuilding === "ALL" ||
             docId.startsWith(selectedBuilding);
 
-          if (matchesBuilding && data.rooms && Array.isArray(data.rooms)) {
-            data.rooms.forEach((room: any) => {
-              if (room.roomName) {
-                const normalized = room.roomName.toLowerCase().trim();
-                nameMap[normalized] = docId;
-              }
-            });
+          if (matchesBuilding) {
+            addRoomOptions(data.rooms, docId, nameMap, roomList);
           }
         });
 
         setNodeMap(rawMap);
         setLookupMap(nameMap);
+        setRoomOptions(roomList);
         setLoading(false);
       } catch (err) {
         console.error("Data Load Error:", err);
@@ -81,6 +100,30 @@ export default function NavigationScreen() {
 
     loadNodes();
   }, [selectedCampus, selectedBuilding]);
+
+  const getSuggestions = (query: string) => {
+    const normalizedQuery = query.toLowerCase().trim();
+    if (!normalizedQuery) return [];
+
+    return roomOptions
+      .map((option) => {
+        let score = 2;
+        if (option.normalized.startsWith(normalizedQuery)) {
+          score = 0;
+        } else if (option.normalized.includes(normalizedQuery)) {
+          score = 1;
+        }
+
+        return { score, option };
+      })
+      .filter((item) => item.score < 2)
+      .sort((a, b) => a.score - b.score || a.option.normalized.localeCompare(b.option.normalized))
+      .slice(0, 5)
+      .map((item) => item.option.roomName);
+  };
+
+  const startSuggestions = useMemo(() => getSuggestions(startID), [startID, roomOptions]);
+  const endSuggestions = useMemo(() => getSuggestions(endID), [endID, roomOptions]);
 
   const handleCalculate = () => {
     const sInput = startID.toLowerCase().trim();
@@ -104,6 +147,12 @@ export default function NavigationScreen() {
       Alert.alert("Path Blocked", "No connection found between these points.");
     }
   };
+
+  const instructionText = (() => {
+    if (path.length <= 1) return "Destination Reached";
+    if (path[1]?.nodeID?.includes("Portal")) return "Bridge to Next Building";
+    return `Head to ${path.at(-1)?.nodeID.split("_").pop()}`;
+  })();
 
   return (
     <SafeAreaView style={styles.container}>
@@ -169,6 +218,19 @@ export default function NavigationScreen() {
                   placeholderTextColor="#999"
                 />
               </View>
+              {startSuggestions.length > 0 && (
+                <View style={styles.suggestionContainer}>
+                  {startSuggestions.map((item) => (
+                    <TouchableOpacity
+                      key={`start-${item}`}
+                      style={styles.suggestionItem}
+                      onPress={() => setStartID(item)}
+                    >
+                      <Text style={styles.suggestionText}>{item}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
               <View style={styles.divider} />
               <Text style={styles.label}>Destination</Text>
               <View style={styles.inputWrapper}>
@@ -181,6 +243,19 @@ export default function NavigationScreen() {
                   placeholderTextColor="#999"
                 />
               </View>
+              {endSuggestions.length > 0 && (
+                <View style={styles.suggestionContainer}>
+                  {endSuggestions.map((item) => (
+                    <TouchableOpacity
+                      key={`end-${item}`}
+                      style={styles.suggestionItem}
+                      onPress={() => setEndID(item)}
+                    >
+                      <Text style={styles.suggestionText}>{item}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
             </View>
           )}
 
@@ -206,11 +281,7 @@ export default function NavigationScreen() {
 
           <View style={[styles.navHUD, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }]}> 
             <View style={styles.instructionCard}>
-              <Text style={styles.instructionText}>
-                {path.length > 1
-                  ? (path[1]?.nodeID?.includes('Portal') ? 'Bridge to Next Building' : `Head to ${path[path.length - 1]?.nodeID.split('_').pop()}`)
-                  : 'Destination Reached'}
-              </Text>
+              <Text style={styles.instructionText}>{instructionText}</Text>
             </View>
 
             <TouchableOpacity
