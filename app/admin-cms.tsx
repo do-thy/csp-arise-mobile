@@ -65,6 +65,7 @@ export default function AdminCMSScreen() {
   const [isLoadingRooms, setIsLoadingRooms] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
 
   const [roomName, setRoomName] = useState("");
   const [roomDescription, setRoomDescription] = useState("");
@@ -402,14 +403,50 @@ export default function AdminCMSScreen() {
               </TouchableOpacity>
             </View>
 
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search rooms by name, building, department, or OCR terms..."
+              placeholderTextColor="#8C8886"
+              value={searchTerm}
+              onChangeText={setSearchTerm}
+            />
+
+            {searchTerm ? (
+              <View style={styles.suggestionsContainer}>
+                {rooms
+                  .filter(room => room.roomName.toLowerCase().includes(searchTerm.toLowerCase()))
+                  .slice(0, 5)
+                  .map(room => (
+                    <TouchableOpacity
+                      key={room._id}
+                      onPress={() => setSearchTerm(room.roomName)}
+                      style={styles.suggestionItem}
+                    >
+                      <Text style={styles.suggestionText}>{room.roomName}</Text>
+                    </TouchableOpacity>
+                  ))}
+              </View>
+            ) : null}
+
             {isLoadingRooms ? (
               <ActivityIndicator size="large" color="#A12124" style={{ marginTop: 24 }} />
             ) : rooms.length === 0 ? (
               <View style={styles.emptyState}>
                 <Text style={styles.emptyStateText}>No rooms found.</Text>
               </View>
-            ) : (
-              rooms.map((room) => (
+            ) : (() => {
+              const filteredRooms = rooms.filter(room =>
+                room.roomName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                room.buildingName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                room.department.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (room.ocrSearchTerms || []).some(term => term.toLowerCase().includes(searchTerm.toLowerCase()))
+              );
+              return filteredRooms.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptyStateText}>No rooms match your search.</Text>
+                </View>
+              ) : (
+                filteredRooms.map((room) => (
                 <View key={room._id} style={styles.roomCard}>
                   <View style={styles.roomHeader}>
                     <Text style={styles.roomName}>{room.roomName}</Text>
@@ -417,7 +454,7 @@ export default function AdminCMSScreen() {
                   </View>
                   <Text style={styles.roomDescription}>{room.roomDescription}</Text>
                   {(room.ocrSearchTerms?.length || 0) > 0 ? (
-                    <Text style={styles.roomMeta}>
+                    <Text style={[styles.roomMeta, { marginBottom: 16 }]}>
                       OCR terms: {room.ocrSearchTerms?.join(", ")}
                     </Text>
                   ) : null}
@@ -439,7 +476,8 @@ export default function AdminCMSScreen() {
                   </View>
                 </View>
               ))
-            )}
+            )})()
+            }
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -506,6 +544,35 @@ const styles = StyleSheet.create({
     color: "#1A1C1A",
     borderWidth: 1,
     borderColor: "#E5E5E5",
+  },
+  searchInput: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    color: "#1A1C1A",
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+  },
+  suggestionsContainer: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+    marginBottom: 16,
+    maxHeight: 150,
+  },
+  suggestionItem: {
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F0F0F0",
+  },
+  suggestionText: {
+    fontFamily: "Inter_400Regular",
+    fontSize: 14,
+    color: "#1A1C1A",
   },
   multilineInput: {
     minHeight: 100,
