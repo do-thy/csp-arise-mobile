@@ -2,14 +2,30 @@ import { Ionicons } from "@expo/vector-icons";
 import { GoogleSignin } from "@react-native-google-signin/google-signin";
 import { router } from "expo-router";
 import { signOut } from "firebase/auth";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { StyleSheet, Text, TouchableOpacity, View, Alert } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { auth } from "../lib/firebase";
+import { auth, db } from "../lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
 
 export default function HomeScreen() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [userRole, setUserRole] = useState<string | null>(null);
   const user = auth.currentUser;
+
+  useEffect(() => {
+    const fetchUserRole = async () => {
+      if (user) {
+        const docRef = doc(db, "users", user.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const userData = docSnap.data();
+          setUserRole(userData.role);
+        }
+      }
+    };
+    fetchUserRole();
+  }, [user]);
 
   // handle user logout logic
   const handleLogout = async () => {
@@ -103,6 +119,19 @@ export default function HomeScreen() {
             </View>
             <Text style={styles.cardText}>NAVIGATION</Text>
           </TouchableOpacity>
+
+          {/* admin cms card - only show for admin users */}
+          {userRole === "admin" && (
+            <TouchableOpacity
+              style={styles.card}
+              onPress={() => router.push("/admin-cms")}
+            >
+              <View style={styles.cardIconCircle}>
+                <Ionicons name="settings-outline" size={24} color="#1C1917" />
+              </View>
+              <Text style={styles.cardText}>ADMIN CMS</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     </SafeAreaView>
