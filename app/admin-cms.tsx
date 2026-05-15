@@ -1,5 +1,4 @@
 import { router } from "expo-router";
-import { collection, addDoc } from "firebase/firestore";
 import React, { useState } from "react";
 import {
   ActivityIndicator,
@@ -14,9 +13,10 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { db } from "../lib/firebase";
 
-interface RoomData {
+const API_BASE_URL = process.env.EXPO_PUBLIC_MAP_URL || "http://localhost:3000";
+
+interface RoomPostBody {
   roomName: string;
   roomDescription: string;
   buildingName: string;
@@ -53,32 +53,43 @@ export default function AdminCMSScreen() {
     try {
       setIsSubmitting(true);
 
-      const roomData: RoomData = {
+      const body: RoomPostBody = {
         roomName: roomName.trim(),
         roomDescription: roomDescription.trim(),
         buildingName: buildingName.trim(),
         department: department.trim(),
-        ocrSearchTerms: ocrSearchTerms.split(",").map(term => term.trim()).filter(term => term),
+        ocrSearchTerms: ocrSearchTerms
+          .split(",")
+          .map((term) => term.trim())
+          .filter(Boolean),
       };
 
-      // Add asset3d only if any field is provided
       const asset3d: any = {};
       if (equirectangularUrl.trim()) asset3d.equirectangularUrl = equirectangularUrl.trim();
       if (modelPath.trim()) asset3d.modelPath = modelPath.trim();
-      if (coordinateX.trim()) asset3d.coordinateX = parseFloat(coordinateX);
-      if (coordinateY.trim()) asset3d.coordinateY = parseFloat(coordinateY);
-      if (coordinateZ.trim()) asset3d.coordinateZ = parseFloat(coordinateZ);
+      if (coordinateX.trim()) asset3d.coordinateX = Number(coordinateX.trim());
+      if (coordinateY.trim()) asset3d.coordinateY = Number(coordinateY.trim());
+      if (coordinateZ.trim()) asset3d.coordinateZ = Number(coordinateZ.trim());
 
       if (Object.keys(asset3d).length > 0) {
-        roomData.asset3d = asset3d;
+        body.asset3d = asset3d;
       }
 
-      // Add to Firestore "rooms" collection
-      await addDoc(collection(db, "rooms"), roomData);
+      const response = await fetch(`${API_BASE_URL}/api/room`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      const jsonResponse = await response.json();
+
+      if (!response.ok) {
+        throw new Error(jsonResponse.error || "Failed to save room.");
+      }
 
       Alert.alert("Success", "Room added successfully!");
-      
-      // Clear form
       setRoomName("");
       setRoomDescription("");
       setBuildingName("");
@@ -89,7 +100,6 @@ export default function AdminCMSScreen() {
       setCoordinateX("");
       setCoordinateY("");
       setCoordinateZ("");
-
     } catch (error: any) {
       console.error("Submit error:", error);
       Alert.alert(
