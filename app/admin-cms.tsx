@@ -1,51 +1,58 @@
 import { router } from "expo-router";
+import {
+    addDoc,
+    collection,
+    deleteDoc,
+    doc,
+    getDocs,
+    setDoc,
+} from "firebase/firestore";
 import React, { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { db } from "../lib/firebase";
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_MAP_URL || "http://localhost:3000";
+const PLACARD_COLLECTION = "placardDialogs";
+const NODE_COLLECTIONS = [
+  "Node_Main",
+  "Node_Digital",
+  "Nodes_Main",
+  "Nodes_Digital",
+  "navigationNodes",
+  "nodes",
+  "roomNodes",
+  "graphNodes",
+];
 
-interface RoomPostBody {
+type NodeData = {
+  roomName: string;
+  nodeID: string;
+  building: string;
+  campus?: string;
+  floor?: string;
+  posX?: number;
+  posY?: number;
+  posZ?: number;
+  [key: string]: any;
+};
+
+type PlacardItem = {
+  id: string;
   roomName: string;
   roomDescription: string;
-  buildingName: string;
-  department: string;
-  ocrSearchTerms: string[];
-  asset3d?: {
-    equirectangularUrl?: string;
-    modelPath?: string;
-    coordinateX?: number;
-    coordinateY?: number;
-    coordinateZ?: number;
-  };
-}
-
-interface RoomItem {
-  _id: string;
-  roomName: string;
-  roomDescription: string;
-  buildingName: string;
-  department: string;
   ocrSearchTerms?: string[];
-  asset3d?: {
-    equirectangularUrl?: string;
-    modelPath?: string;
-    coordinateX?: number;
-    coordinateY?: number;
-    coordinateZ?: number;
-  };
-}
+};
 
 const normalizeSearchTerms = (terms?: string): string[] => {
   if (!terms) return [];
@@ -55,157 +62,290 @@ const normalizeSearchTerms = (terms?: string): string[] => {
     .filter(Boolean);
 };
 
-const formatAssetValue = (value?: number | string) =>
-  value === undefined || value === null ? "" : String(value);
+const normalizeSearchKey = (value: string) =>
+  value
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_-]/g, "");
+
+const normalizeSearchTerm = (value: string) =>
+  value.toLowerCase().trim().replace(/\s+/g, " ");
+
+const computeTextScore = (text: string, query: string) => {
+  const normalizedText = normalizeSearchTerm(text);
+  const normalizedQuery = normalizeSearchTerm(query);
+
+  if (!normalizedText || !normalizedQuery) return 0;
+  if (normalizedText === normalizedQuery) return 1;
+  if (normalizedText.includes(normalizedQuery)) return 0.9;
+  if (normalizedQuery.includes(normalizedText)) return 0.8;
+  if (normalizedText.startsWith(normalizedQuery)) return 0.85;
+
+  const minLen = Math.min(normalizedText.length, normalizedQuery.length);
+  let shared = 0;
+  for (let i = 0; i < minLen; i += 1) {
+    if (normalizedText[i] === normalizedQuery[i]) shared += 1;
+  }
+
+  return shared / normalizedQuery.length;
+};
+
+const computeNodeSearchScore = (node: NodeData, term: string) => {
+  return Math.max(
+    computeTextScore(node.roomName, term),
+    computeTextScore(node.building || "", term),
+    computeTextScore(node.campus || "", term),
+    computeTextScore(node.floor || "", term),
+    computeTextScore(node.nodeID || "", term),
+  );
+};
 
 const isEmptyString = (value: string) => value.trim().length === 0;
 
-export default function AdminCMSScreen() {
-  const [rooms, setRooms] = useState<RoomItem[]>([]);
-  const [isLoadingRooms, setIsLoadingRooms] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState("");
+const formatAssetValue = (value?: number | string) =>
+  value === undefined || value === null ? "" : String(value);
 
-  const [roomName, setRoomName] = useState("");
+const buildPlacardItem = (id: string, data: any): PlacardItem => ({
+  id,
+  roomName: String(data.roomName || ""),
+  roomDescription: String(data.roomDescription || ""),
+  ocrSearchTerms: Array.isArray(data.ocrSearchTerms)
+    ? data.ocrSearchTerms.map(String)
+    : [],
+});
+
+// Fetch all node entries from all node collections
+const fetchAllNodes = async (): Promise<NodeData[]> => {
+  const allNodes: NodeData[] = [];
+
+  for (const collectionName of NODE_COLLECTIONS) {
+    try {
+      const snapshot = await getDocs(collection(db, collectionName));
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        const nodeID = String(data.nodeID || docSnap.id);
+        const building = String(data.building || "");
+        const campus = data.campus ? String(data.campus) : undefined;
+        const floor = data.floor ? String(data.floor) : undefined;
+        const posX = data.posX;
+        const posY = data.posY;
+        const posZ = data.posZ;
+
+        // Extract roomNames from nested rooms array
+        if (Array.isArray(data.rooms)) {
+          data.rooms.forEach((room: any) => {
+            if (room && room.roomName) {
+              allNodes.push({
+                roomName: String(room.roomName),
+                nodeID,
+                building,
+                campus,
+                floor,
+                posX,
+                posY,
+                posZ,
+                ...data,
+              });
+            }
+          });
+        }
+      });
+    } catch (error) {
+      console.warn(`Unable to load nodes from ${collectionName}:`, error);
+    }
+  }
+
+  // Remove duplicates based on roomName
+  const uniqueNodes = Array.from(
+    new Map(allNodes.map((node) => [node.roomName, node])).values(),
+  );
+
+  return uniqueNodes.sort((a, b) => a.roomName.localeCompare(b.roomName));
+};
+
+const getNodeByRoomName = async (
+  roomName: string,
+): Promise<NodeData | null> => {
+  const normalizedTarget = normalizeSearchKey(roomName);
+
+  for (const collectionName of NODE_COLLECTIONS) {
+    try {
+      const snapshot = await getDocs(collection(db, collectionName));
+      for (const docSnap of snapshot.docs) {
+        const data = docSnap.data();
+        const nodeID = String(data.nodeID || docSnap.id);
+        const building = String(data.building || "");
+        const campus = data.campus ? String(data.campus) : undefined;
+        const floor = data.floor ? String(data.floor) : undefined;
+
+        // Search through nested rooms array for matching roomName
+        if (Array.isArray(data.rooms)) {
+          for (const room of data.rooms) {
+            if (
+              room &&
+              room.roomName &&
+              normalizeSearchKey(room.roomName) === normalizedTarget
+            ) {
+              return {
+                roomName: String(room.roomName),
+                nodeID,
+                building,
+                campus,
+                floor,
+                posX: data.posX,
+                posY: data.posY,
+                posZ: data.posZ,
+                ...data,
+              };
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.warn(`Unable to search ${collectionName}:`, error);
+    }
+  }
+  return null;
+};
+
+export default function AdminCMSScreen() {
+  const [allNodes, setAllNodes] = useState<NodeData[]>([]);
+  const [placardsMap, setPlacards] = useState<Map<string, PlacardItem>>(
+    new Map(),
+  );
+  const [isLoadingData, setIsLoadingData] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [selectedRoomName, setSelectedRoomName] = useState<string | null>(null);
+  const [selectedNode, setSelectedNode] = useState<NodeData | null>(null);
+  const [showNodeSelector, setShowNodeSelector] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
   const [roomDescription, setRoomDescription] = useState("");
-  const [buildingName, setBuildingName] = useState("");
-  const [department, setDepartment] = useState("");
   const [ocrSearchTerms, setOcrSearchTerms] = useState("");
-  const [equirectangularUrl, setEquirectangularUrl] = useState("");
-  const [modelPath, setModelPath] = useState("");
-  const [coordinateX, setCoordinateX] = useState("");
-  const [coordinateY, setCoordinateY] = useState("");
-  const [coordinateZ, setCoordinateZ] = useState("");
 
   const resetForm = () => {
-    setSelectedRoomId(null);
-    setRoomName("");
+    setSelectedRoomName(null);
+    setSelectedNode(null);
     setRoomDescription("");
-    setBuildingName("");
-    setDepartment("");
     setOcrSearchTerms("");
-    setEquirectangularUrl("");
-    setModelPath("");
-    setCoordinateX("");
-    setCoordinateY("");
-    setCoordinateZ("");
+    setSearchTerm("");
+    setShowNodeSelector(false);
   };
 
-  const populateForm = (room: RoomItem) => {
-    setSelectedRoomId(room._id);
-    setRoomName(room.roomName);
-    setRoomDescription(room.roomDescription);
-    setBuildingName(room.buildingName);
-    setDepartment(room.department);
-    setOcrSearchTerms((room.ocrSearchTerms || []).join(", "));
-    setEquirectangularUrl(room.asset3d?.equirectangularUrl || "");
-    setModelPath(room.asset3d?.modelPath || "");
-    setCoordinateX(formatAssetValue(room.asset3d?.coordinateX));
-    setCoordinateY(formatAssetValue(room.asset3d?.coordinateY));
-    setCoordinateZ(formatAssetValue(room.asset3d?.coordinateZ));
+  const selectNode = async (node: NodeData) => {
+    setSelectedNode(node);
+    setSelectedRoomName(node.roomName);
+    setShowNodeSelector(false);
+
+    // Load existing placard data if it exists
+    const existingPlacard = placardsMap.get(node.roomName);
+    if (existingPlacard) {
+      setRoomDescription(existingPlacard.roomDescription);
+      setOcrSearchTerms((existingPlacard.ocrSearchTerms || []).join(", "));
+    } else {
+      setRoomDescription("");
+      setOcrSearchTerms("");
+    }
   };
 
-  const fetchRooms = async () => {
-    setIsLoadingRooms(true);
+  const fetchData = async () => {
+    setIsLoadingData(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/room`);
-      const jsonResponse = await response.json();
+      // Load all node entries
+      const nodes = await fetchAllNodes();
+      setAllNodes(nodes);
 
-      if (!response.ok) {
-        throw new Error(jsonResponse.error || "Failed to load rooms.");
-      }
-
-      setRooms(Array.isArray(jsonResponse.data) ? jsonResponse.data : []);
+      // Load all placard entries
+      const placardSnapshot = await getDocs(collection(db, PLACARD_COLLECTION));
+      const placardMap = new Map<string, PlacardItem>();
+      placardSnapshot.forEach((docSnap) => {
+        const item = buildPlacardItem(docSnap.id, docSnap.data());
+        placardMap.set(item.roomName, item);
+      });
+      setPlacards(placardMap);
     } catch (error: any) {
-      console.error("Failed to fetch rooms:", error);
-      Alert.alert("Load Failed", error.message || "Unable to load rooms.");
+      console.error("Failed to fetch data:", error);
+      Alert.alert("Load Failed", error.message || "Unable to load data.");
     } finally {
-      setIsLoadingRooms(false);
+      setIsLoadingData(false);
     }
   };
 
   useEffect(() => {
-    fetchRooms();
+    fetchData();
   }, []);
 
   const handleSave = async () => {
-    if (
-      isEmptyString(roomName) ||
-      isEmptyString(roomDescription) ||
-      isEmptyString(buildingName) ||
-      isEmptyString(department)
-    ) {
-      Alert.alert("Missing Fields", "Please fill out all required fields.");
+    if (!selectedNode) {
+      Alert.alert("Select Room", "Please select a room from the node list.");
+      return;
+    }
+
+    if (isEmptyString(roomDescription)) {
+      Alert.alert("Missing Fields", "Room description is required.");
       return;
     }
 
     try {
       setIsSubmitting(true);
 
-      const body: RoomPostBody = {
-        roomName: roomName.trim(),
+      const payload: PlacardItem = {
+        id: placardsMap.get(selectedNode.roomName)?.id || "",
+        roomName: selectedNode.roomName,
         roomDescription: roomDescription.trim(),
-        buildingName: buildingName.trim(),
-        department: department.trim(),
         ocrSearchTerms: normalizeSearchTerms(ocrSearchTerms),
       };
 
-      const asset3d: any = {};
-      if (!isEmptyString(equirectangularUrl)) {
-        asset3d.equirectangularUrl = equirectangularUrl.trim();
-      }
-      if (!isEmptyString(modelPath)) {
-        asset3d.modelPath = modelPath.trim();
-      }
-      if (!isEmptyString(coordinateX)) {
-        asset3d.coordinateX = Number(coordinateX.trim());
-      }
-      if (!isEmptyString(coordinateY)) {
-        asset3d.coordinateY = Number(coordinateY.trim());
-      }
-      if (!isEmptyString(coordinateZ)) {
-        asset3d.coordinateZ = Number(coordinateZ.trim());
-      }
-
-      if (Object.keys(asset3d).length > 0) {
-        body.asset3d = asset3d;
-      }
-
-      const url = selectedRoomId
-        ? `${API_BASE_URL}/api/room?id=${encodeURIComponent(selectedRoomId)}`
-        : `${API_BASE_URL}/api/room`;
-
-      const response = await fetch(url, {
-        method: selectedRoomId ? "PATCH" : "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-
-      const jsonResponse = await response.json();
-
-      if (!response.ok) {
-        throw new Error(jsonResponse.error || "Failed to save room.");
+      const existingPlacard = placardsMap.get(selectedNode.roomName);
+      if (existingPlacard?.id) {
+        // Update existing placard entry
+        await setDoc(
+          doc(db, PLACARD_COLLECTION, existingPlacard.id),
+          {
+            roomName: payload.roomName,
+            roomDescription: payload.roomDescription,
+            ocrSearchTerms: payload.ocrSearchTerms,
+          },
+          { merge: true },
+        );
+      } else {
+        // Create new placard entry
+        await addDoc(collection(db, PLACARD_COLLECTION), {
+          roomName: payload.roomName,
+          roomDescription: payload.roomDescription,
+          ocrSearchTerms: payload.ocrSearchTerms,
+        });
       }
 
-      const successMessage = selectedRoomId ? "Room updated successfully!" : "Room added successfully!";
-      Alert.alert("Success", successMessage);
+      Alert.alert(
+        "Success",
+        existingPlacard
+          ? "Room updated successfully!"
+          : "Room added successfully!",
+      );
       resetForm();
-      fetchRooms();
+      fetchData();
     } catch (error: any) {
       console.error("Save room error:", error);
-      Alert.alert("Save Failed", error.message || "An error occurred while saving the room.");
+      Alert.alert(
+        "Save Failed",
+        error.message || "An error occurred while saving.",
+      );
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleDelete = (roomId: string, roomNameText: string) => {
+  const handleDelete = (roomName: string) => {
+    const existingPlacard = placardsMap.get(roomName);
+    if (!existingPlacard) {
+      Alert.alert("No Entry", "There is no placard entry for this room yet.");
+      return;
+    }
+
     Alert.alert(
-      "Delete Room",
-      `Are you sure you want to delete ${roomNameText}? This cannot be undone.`,
+      "Delete Entry",
+      `Delete placard data for ${roomName}? This only removes the placard entry, not the navigation node.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -214,23 +354,16 @@ export default function AdminCMSScreen() {
           onPress: async () => {
             try {
               setIsSubmitting(true);
-              const response = await fetch(`${API_BASE_URL}/api/room?id=${encodeURIComponent(roomId)}`, {
-                method: "DELETE",
-              });
-              const jsonResponse = await response.json();
-
-              if (!response.ok) {
-                throw new Error(jsonResponse.error || "Failed to delete room.");
-              }
-
-              Alert.alert("Deleted", "Room deleted successfully.");
-              if (selectedRoomId === roomId) {
-                resetForm();
-              }
-              fetchRooms();
+              await deleteDoc(doc(db, PLACARD_COLLECTION, existingPlacard.id));
+              Alert.alert("Deleted", "Placard entry deleted successfully.");
+              resetForm();
+              fetchData();
             } catch (error: any) {
-              console.error("Delete room error:", error);
-              Alert.alert("Delete Failed", error.message || "An error occurred while deleting the room.");
+              console.error("Delete error:", error);
+              Alert.alert(
+                "Delete Failed",
+                error.message || "An error occurred.",
+              );
             } finally {
               setIsSubmitting(false);
             }
@@ -247,6 +380,166 @@ export default function AdminCMSScreen() {
   const navigateBack = () => {
     router.back();
   };
+
+  const filteredNodes = allNodes
+    .map((node) => ({
+      node,
+      score: searchTerm ? computeNodeSearchScore(node, searchTerm) : 1,
+    }))
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.node.roomName.localeCompare(b.node.roomName);
+    })
+    .map(({ node }) => node);
+
+  let contentView: React.ReactNode;
+
+  if (isLoadingData) {
+    contentView = (
+      <View style={styles.centerContainer}>
+        <ActivityIndicator size="large" color="#A12124" />
+      </View>
+    );
+  } else if (!selectedNode) {
+    // Show node selector
+    contentView = (
+      <View style={styles.selectorContainer}>
+        <Text style={styles.sectionTitle}>Select a Room</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Search rooms..."
+          placeholderTextColor="#8C8886"
+          value={searchTerm}
+          onChangeText={setSearchTerm}
+          editable={!isSubmitting}
+        />
+
+        <View style={styles.nodeList}>
+          {filteredNodes.length === 0 ? (
+            <Text style={styles.emptyStateText}>No rooms found.</Text>
+          ) : (
+            filteredNodes.map((node) => {
+              const existingPlacard = placardsMap.get(node.roomName);
+              return (
+                <TouchableOpacity
+                  key={node.roomName}
+                  style={styles.nodeCard}
+                  onPress={() => selectNode(node)}
+                  disabled={isSubmitting}
+                >
+                  <View style={styles.nodeHeader}>
+                    <Text style={styles.nodeName}>{node.roomName}</Text>
+                    {existingPlacard ? (
+                      <Text style={styles.existingBadge}>Has Entry</Text>
+                    ) : (
+                      <Text style={styles.missingBadge}>No Entry</Text>
+                    )}
+                  </View>
+                  <Text style={styles.nodeMeta}>
+                    {node.building}
+                    {node.floor ? ` • Floor ${node.floor}` : ""}
+                  </Text>
+                  {node.campus ? (
+                    <Text style={styles.nodeMeta}>{node.campus}</Text>
+                  ) : null}
+                </TouchableOpacity>
+              );
+            })
+          )}
+        </View>
+      </View>
+    );
+  } else {
+    // Show placard editor for selected node
+    const existingPlacard = placardsMap.get(selectedNode.roomName);
+    contentView = (
+      <View style={styles.editorContainer}>
+        <View style={styles.selectedNodeDisplay}>
+          <Text style={styles.sectionTitle}>
+            {existingPlacard ? "Edit" : "Add"} Placard Entry
+          </Text>
+          <View style={styles.nodeInfoBox}>
+            <Text style={styles.nodeInfoLabel}>Room:</Text>
+            <Text style={styles.nodeInfoValue}>{selectedNode.roomName}</Text>
+
+            <Text style={styles.nodeInfoLabel}>Building:</Text>
+            <Text style={styles.nodeInfoValue}>{selectedNode.building}</Text>
+
+            {selectedNode.floor ? (
+              <>
+                <Text style={styles.nodeInfoLabel}>Floor:</Text>
+                <Text style={styles.nodeInfoValue}>{selectedNode.floor}</Text>
+              </>
+            ) : null}
+
+            {selectedNode.campus ? (
+              <>
+                <Text style={styles.nodeInfoLabel}>Campus:</Text>
+                <Text style={styles.nodeInfoValue}>{selectedNode.campus}</Text>
+              </>
+            ) : null}
+
+            <Text style={styles.nodeInfoLabel}>Node ID:</Text>
+            <Text style={styles.nodeInfoValue}>{selectedNode.nodeID}</Text>
+          </View>
+        </View>
+
+        <TextInput
+          style={[styles.input, styles.multilineInput]}
+          placeholder="Room Description *"
+          placeholderTextColor="#8C8886"
+          value={roomDescription}
+          onChangeText={setRoomDescription}
+          multiline
+          editable={!isSubmitting}
+        />
+
+        <TextInput
+          style={styles.input}
+          placeholder="OCR Search Terms (comma-separated)"
+          placeholderTextColor="#8C8886"
+          value={ocrSearchTerms}
+          onChangeText={setOcrSearchTerms}
+          editable={!isSubmitting}
+        />
+
+        <View style={styles.buttonRow}>
+          <TouchableOpacity
+            style={[styles.formButton, styles.submitButton]}
+            onPress={handleSave}
+            disabled={isSubmitting}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Text style={styles.submitButtonText}>
+                {existingPlacard ? "Update" : "Create"} Entry
+              </Text>
+            )}
+          </TouchableOpacity>
+
+          {existingPlacard && (
+            <TouchableOpacity
+              style={[styles.formButton, styles.deleteButton]}
+              onPress={() => handleDelete(selectedNode.roomName)}
+              disabled={isSubmitting}
+            >
+              <Text style={styles.deleteButtonText}>Delete</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity
+            style={[styles.formButton, styles.cancelButton]}
+            onPress={handleCancelEdit}
+            disabled={isSubmitting}
+          >
+            <Text style={styles.cancelButtonText}>Back</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -267,218 +560,7 @@ export default function AdminCMSScreen() {
             <View style={{ width: 60 }} />
           </View>
 
-          <View style={styles.formSection}>
-            <Text style={styles.sectionTitle}>
-              {selectedRoomId ? "Edit Room" : "Add New Room"}
-            </Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Room Name *"
-              placeholderTextColor="#8C8886"
-              value={roomName}
-              onChangeText={setRoomName}
-              editable={!isSubmitting}
-            />
-
-            <TextInput
-              style={[styles.input, styles.multilineInput]}
-              placeholder="Room Description *"
-              placeholderTextColor="#8C8886"
-              value={roomDescription}
-              onChangeText={setRoomDescription}
-              multiline
-              editable={!isSubmitting}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Building Name *"
-              placeholderTextColor="#8C8886"
-              value={buildingName}
-              onChangeText={setBuildingName}
-              editable={!isSubmitting}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Department *"
-              placeholderTextColor="#8C8886"
-              value={department}
-              onChangeText={setDepartment}
-              editable={!isSubmitting}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="OCR Search Terms (comma-separated)"
-              placeholderTextColor="#8C8886"
-              value={ocrSearchTerms}
-              onChangeText={setOcrSearchTerms}
-              editable={!isSubmitting}
-            />
-
-            <Text style={styles.subSectionTitle}>3D Asset (Optional)</Text>
-
-            <TextInput
-              style={styles.input}
-              placeholder="Equirectangular URL"
-              placeholderTextColor="#8C8886"
-              value={equirectangularUrl}
-              onChangeText={setEquirectangularUrl}
-              editable={!isSubmitting}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Model Path"
-              placeholderTextColor="#8C8886"
-              value={modelPath}
-              onChangeText={setModelPath}
-              editable={!isSubmitting}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Coordinate X"
-              placeholderTextColor="#8C8886"
-              value={coordinateX}
-              onChangeText={setCoordinateX}
-              keyboardType="numeric"
-              editable={!isSubmitting}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Coordinate Y"
-              placeholderTextColor="#8C8886"
-              value={coordinateY}
-              onChangeText={setCoordinateY}
-              keyboardType="numeric"
-              editable={!isSubmitting}
-            />
-
-            <TextInput
-              style={styles.input}
-              placeholder="Coordinate Z"
-              placeholderTextColor="#8C8886"
-              value={coordinateZ}
-              onChangeText={setCoordinateZ}
-              keyboardType="numeric"
-              editable={!isSubmitting}
-            />
-
-            <TouchableOpacity
-              style={styles.submitButton}
-              onPress={handleSave}
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
-              ) : (
-                <Text style={styles.submitButtonText}>
-                  {selectedRoomId ? "Update Room" : "Add Room"}
-                </Text>
-              )}
-            </TouchableOpacity>
-
-            {selectedRoomId && (
-              <TouchableOpacity
-                style={[styles.submitButton, styles.cancelButton]}
-                onPress={handleCancelEdit}
-                disabled={isSubmitting}
-              >
-                <Text style={[styles.submitButtonText, styles.cancelButtonText]}>
-                  Cancel Edit
-                </Text>
-              </TouchableOpacity>
-            )}
-          </View>
-
-          <View style={styles.listSection}>
-            <View style={styles.listHeader}>
-              <Text style={styles.sectionTitle}>Existing Rooms</Text>
-              <TouchableOpacity onPress={fetchRooms} style={styles.refreshButton}>
-                <Text style={styles.refreshButtonText}>Refresh</Text>
-              </TouchableOpacity>
-            </View>
-
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search rooms by name, building, department, or OCR terms..."
-              placeholderTextColor="#8C8886"
-              value={searchTerm}
-              onChangeText={setSearchTerm}
-            />
-
-            {searchTerm ? (
-              <View style={styles.suggestionsContainer}>
-                {rooms
-                  .filter(room => room.roomName.toLowerCase().includes(searchTerm.toLowerCase()))
-                  .slice(0, 5)
-                  .map(room => (
-                    <TouchableOpacity
-                      key={room._id}
-                      onPress={() => setSearchTerm(room.roomName)}
-                      style={styles.suggestionItem}
-                    >
-                      <Text style={styles.suggestionText}>{room.roomName}</Text>
-                    </TouchableOpacity>
-                  ))}
-              </View>
-            ) : null}
-
-            {isLoadingRooms ? (
-              <ActivityIndicator size="large" color="#A12124" style={{ marginTop: 24 }} />
-            ) : rooms.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyStateText}>No rooms found.</Text>
-              </View>
-            ) : (() => {
-              const filteredRooms = rooms.filter(room =>
-                room.roomName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                room.buildingName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                room.department.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (room.ocrSearchTerms || []).some(term => term.toLowerCase().includes(searchTerm.toLowerCase()))
-              );
-              return filteredRooms.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <Text style={styles.emptyStateText}>No rooms match your search.</Text>
-                </View>
-              ) : (
-                filteredRooms.map((room) => (
-                <View key={room._id} style={styles.roomCard}>
-                  <View style={styles.roomHeader}>
-                    <Text style={styles.roomName}>{room.roomName}</Text>
-                    <Text style={styles.roomMeta}>{room.buildingName} • {room.department}</Text>
-                  </View>
-                  <Text style={styles.roomDescription}>{room.roomDescription}</Text>
-                  {(room.ocrSearchTerms?.length || 0) > 0 ? (
-                    <Text style={[styles.roomMeta, { marginBottom: 16 }]}>
-                      OCR terms: {room.ocrSearchTerms?.join(", ")}
-                    </Text>
-                  ) : null}
-                  <View style={styles.roomButtons}>
-                    <TouchableOpacity
-                      style={[styles.roomButton, styles.editButton]}
-                      onPress={() => populateForm(room)}
-                      disabled={isSubmitting}
-                    >
-                      <Text style={styles.roomButtonText}>Edit</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.roomButton, styles.deleteButton]}
-                      onPress={() => handleDelete(room._id, room.roomName)}
-                      disabled={isSubmitting}
-                    >
-                      <Text style={styles.roomButtonText}>Delete</Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))
-            )})()
-            }
-          </View>
+          {contentView}
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -488,191 +570,182 @@ export default function AdminCMSScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#FAF9F6",
+    backgroundColor: "#F5F5F3",
   },
   scrollContainer: {
-    flexGrow: 1,
-    paddingHorizontal: 24,
-    paddingBottom: 40,
+    paddingBottom: 32,
   },
   header: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    height: 80,
-    marginTop: 10,
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    backgroundColor: "#FFFFFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E0E0E0",
   },
   backButton: {
-    padding: 10,
+    padding: 8,
   },
   backButtonText: {
-    fontFamily: "Inter_700Bold",
     fontSize: 16,
-    color: "#1A1C1A",
+    color: "#A12124",
+    fontWeight: "600",
   },
   headerTitle: {
-    fontFamily: "Manrope_700Bold",
-    fontSize: 18,
-    letterSpacing: 1.8,
-    textTransform: "uppercase",
+    fontSize: 20,
+    fontWeight: "700",
     color: "#1C1917",
   },
-  formSection: {
+  centerContainer: {
     flex: 1,
-    marginTop: 20,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingVertical: 40,
+  },
+  selectorContainer: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 20,
+  },
+  editorContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 20,
   },
   sectionTitle: {
-    fontFamily: "Manrope_800ExtraBold",
-    fontSize: 32,
-    color: "#1A1C1A",
-    marginBottom: 24,
-  },
-  subSectionTitle: {
-    fontFamily: "Inter_700Bold",
     fontSize: 18,
-    color: "#1A1C1A",
-    marginTop: 20,
-    marginBottom: 12,
+    fontWeight: "700",
+    color: "#1C1917",
+    marginBottom: 16,
   },
   input: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
-    fontFamily: "Inter_400Regular",
-    fontSize: 16,
-    color: "#1A1C1A",
     borderWidth: 1,
-    borderColor: "#E5E5E5",
-  },
-  searchInput: {
-    backgroundColor: "#FFFFFF",
+    borderColor: "#D0CCCB",
     borderRadius: 8,
-    padding: 12,
-    marginBottom: 16,
-    fontFamily: "Inter_400Regular",
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     fontSize: 14,
-    color: "#1A1C1A",
-    borderWidth: 1,
-    borderColor: "#E5E5E5",
-  },
-  suggestionsContainer: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#E5E5E5",
-    marginBottom: 16,
-    maxHeight: 150,
-  },
-  suggestionItem: {
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F0F0F0",
-  },
-  suggestionText: {
-    fontFamily: "Inter_400Regular",
-    fontSize: 14,
-    color: "#1A1C1A",
+    color: "#1C1917",
+    marginBottom: 12,
   },
   multilineInput: {
-    minHeight: 100,
+    minHeight: 80,
     textAlignVertical: "top",
   },
-  submitButton: {
-    backgroundColor: "#A12124",
+  nodeList: {
+    marginTop: 12,
+  },
+  nodeCard: {
+    backgroundColor: "#FFFFFF",
     borderRadius: 8,
-    paddingVertical: 16,
-    alignItems: "center",
-    marginTop: 24,
-    marginBottom: 16,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#D0CCCB",
   },
-  cancelButton: {
-    backgroundColor: "#F1F1F1",
-  },
-  submitButtonText: {
-    fontFamily: "Inter_700Bold",
-    fontSize: 16,
-    color: "#FFFFFF",
-  },
-  cancelButtonText: {
-    color: "#1A1C1A",
-  },
-  listSection: {
-    marginTop: 24,
-  },
-  listHeader: {
+  nodeHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-  },
-  refreshButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    backgroundColor: "#F1F1F1",
-  },
-  refreshButtonText: {
-    color: "#1A1C1A",
-    fontFamily: "Inter_700Bold",
-    fontSize: 14,
-  },
-  emptyState: {
-    marginTop: 20,
-    alignItems: "center",
-  },
-  emptyStateText: {
-    fontFamily: "Inter_400Regular",
-    color: "#6B6B6B",
-    fontSize: 16,
-  },
-  roomCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: "#F0F0F0",
-  },
-  roomHeader: {
     marginBottom: 8,
   },
-  roomName: {
-    fontFamily: "Manrope_800ExtraBold",
-    fontSize: 20,
-    color: "#1A1C1A",
-  },
-  roomMeta: {
-    fontFamily: "Inter_400Regular",
-    fontSize: 14,
-    color: "#6B6B6B",
-    marginTop: 4,
-  },
-  roomDescription: {
-    fontFamily: "Inter_400Regular",
+  nodeName: {
     fontSize: 16,
-    color: "#262626",
+    fontWeight: "700",
+    color: "#1C1917",
+    flex: 1,
+  },
+  existingBadge: {
+    fontSize: 12,
+    color: "#FFFFFF",
+    backgroundColor: "#4CAF50",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    fontWeight: "600",
+  },
+  missingBadge: {
+    fontSize: 12,
+    color: "#FFFFFF",
+    backgroundColor: "#9E9E9E",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    fontWeight: "600",
+  },
+  nodeMeta: {
+    fontSize: 13,
+    color: "#6B6B6B",
+    marginVertical: 2,
+  },
+  selectedNodeDisplay: {
+    marginBottom: 20,
+  },
+  nodeInfoBox: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: "#D0CCCB",
     marginBottom: 16,
   },
-  roomButtons: {
-    flexDirection: "row",
-    justifyContent: "space-between",
+  nodeInfoLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#6B6B6B",
+    marginTop: 8,
   },
-  roomButton: {
+  nodeInfoValue: {
+    fontSize: 14,
+    color: "#1C1917",
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  buttonRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 16,
+  },
+  formButton: {
     flex: 1,
     paddingVertical: 12,
     borderRadius: 8,
     alignItems: "center",
+    justifyContent: "center",
   },
-  editButton: {
-    backgroundColor: "#1A1C1A",
-    marginRight: 10,
+  submitButton: {
+    backgroundColor: "#A12124",
+  },
+  submitButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
   },
   deleteButton: {
-    backgroundColor: "#E73C3C",
+    backgroundColor: "#D32F2F",
   },
-  roomButtonText: {
-    fontFamily: "Inter_700Bold",
-    fontSize: 14,
+  deleteButtonText: {
     color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  cancelButton: {
+    backgroundColor: "#9E9E9E",
+  },
+  cancelButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  emptyState: {
+    paddingVertical: 40,
+    alignItems: "center",
+  },
+  emptyStateText: {
+    fontSize: 14,
+    color: "#6B6B6B",
+    fontStyle: "italic",
   },
 });
